@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opensysone"
+version = "0.1.0"
+description = "Open-source System One style decision model: typed questions in, calibrated probabilities out, one parallel forward pass."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "torch>=2.2",
+    "transformers>=4.45",
+    "numpy",
+    "pydantic>=2",
+    "fastapi",
+    "uvicorn",
+    "tqdm",
+    "safetensors",
+]
+
+[project.optional-dependencies]
+train = ["datasets", "accelerate", "peft", "bitsandbytes"]
+distill = ["openai", "anthropic"]
+dev = ["pytest", "httpx"]
+
+[tool.setuptools.packages.find]
+include = ["opensysone*"]
