@@ -24,12 +24,13 @@ ACCUM=${ACCUM:-4}
 LR=${LR:-$([ "$LORA" = "0" ] && echo 1e-5 || echo 1e-4)}
 RPS=${RPS:-0.5}                 # ranked-probability-score weight for ordinal `score` questions
 CONSISTENCY=${CONSISTENCY:-0.1} # paraphrase-consistency (JS) weight; only acts on rows with `paraphrases`
+MAXTOK=${MAXTOK:-1024}          # state truncation during training; cost is O(tokens^2) with the dense mask
 
 python -m maatlm.train \
   --base "$BASE" --train "$DATA/train.jsonl" --val "$DATA/val.jsonl" --out "$OUT" \
   --epochs "$EPOCHS" --batch "$BATCH" --grad-accum "$ACCUM" --lr "$LR" \
   --lora "$LORA" --bf16 --grad-checkpoint --shuffle-options --rule log \
-  --rps "$RPS" --consistency "$CONSISTENCY" \
+  --rps "$RPS" --consistency "$CONSISTENCY" --max-state-tokens "$MAXTOK" \
   --eval-every 250 --workers 4
 
 # temperature scaling on the held-out calibration split (never on train)
