@@ -19,5 +19,8 @@ python -m pytest tests -q
 python -m maatlm.datasets.convert_hf --out data/public --cap 20000 --val-cap 2000
 python -m maatlm.datasets.generator  --out data/gen --n 20000 --seed 0
 # merged train set: public breadth + generator truth (val/calib stay separate so ECE-vs-truth is reportable)
-mkdir -p data/mix && cat data/public/train.jsonl data/gen/train.jsonl | shuf --random-source=<(yes) > data/mix/train.jsonl \
+# the real teacher-labelled rows (data/real, tracked in git) are the only messy-input data: upweight x3
+mkdir -p data/mix && { cat data/public/train.jsonl data/gen/train.jsonl; for i in 1 2 3; do cat data/real/train.labeled.jsonl; done; } \
+  | shuf --random-source=<(yes) > data/mix/train.jsonl \
   && cp data/gen/calib.jsonl data/mix/calib.jsonl && cat data/public/val.jsonl data/gen/val.jsonl > data/mix/val.jsonl
+wc -l data/mix/*.jsonl
