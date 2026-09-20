@@ -1,8 +1,12 @@
-"""Post-hoc temperature scaling, one temperature per primitive type.
+"""Post-hoc temperature scaling, one temperature per primitive type AND per
+(primitive, option count) where the calibration set has enough examples.
 
     python -m opensysone.calibrate --model runs/x/final --data data/calib.jsonl [--out runs/x/calibrated]
 
-Fits T_choice, T_score, T_noul by minimising NLL on a held-out set (never the
+Fits T_choice, T_score, T_noul (plus T_choice:3, T_score:5, ... when >= --min-count
+records exist for that option count; softmax sharpness depends on how many options
+share the mass, so a single per-type temperature is systematically off for the
+counts it was not fitted on) by minimising NLL on a held-out set (never the
 training set), writes them into the checkpoint's opensysone_config.json, and
 prints before/after ECE. Temperature scaling cannot change the argmax, so
 accuracy is untouched; it only fixes systematic over/under-confidence.
@@ -12,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
@@ -23,8 +27,8 @@ from .metrics import summarize
 from .model import SystemOneModel
 
 
-def fit_temperature(recs: List[Dict], qtype: str, iters: int = 300) -> float:
-    rs = [r for r in recs if r["qtype"] == qtype]
+def fit_temperature(recs: List[Dict], qtype: str, iters: int = 300, n: Optional[int] = None) -> float:
+    rs = [r for r in recs if r["qtype"] == qtype and (n is None or r.get("n") == n)]
     if not rs:
         return 1.0
     log_t = torch.zeros((), requires_grad=True)
@@ -55,6 +59,7 @@ def main(argv=None):
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--bf16", action="store_true")
     ap.add_argument("--device", default=None)
+    ap.add_argument("--min-count", type=int, default=50, help="records needed to fit a per-option-count temperature")
     args = ap.parse_args(argv)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     m = SystemOneModel.from_pretrained(args.model, torch_dtype=torch.bfloat16 if args.bf16 else None, device=device)
@@ -62,10 +67,19 @@ def main(argv=None):
 
     before = summarize(apply_temps(recs, {}))
     temps = {t: fit_temperature(recs, t) for t in ("choice", "score", "noul")}
+    counts: Dict[str, int] = {}
+    for r in recs:
+        if r["qtype"] != "noul":
+            counts[f"{r['qtype']}:{r['n']}"] = counts.get(f"{r['qtype']}:{r['n']}", 0) + 1
+    for key, c in sorted(counts.items()):
+        if c >= args.min_count:
+            qt, n = key.split(":")
+            T = fit_temperature(recs, qt, n=int(n))
+            if 0.05 < T < 20.0:  # a fit pinned at the clamp means the logits carry no signal; keep the type-level value
+                temps[key] = T
     after = summarize(apply_temps(recs, temps))
-    for t in temps:
-        with torch.no_grad():
-            m.log_temp[t].fill_(float(torch.tensor(temps[t]).log()))
+    for key, T in temps.items():
+        m.set_temperature(key, T)
     m.save(args.out or args.model)
     print(json.dumps({
         "temperatures": temps,

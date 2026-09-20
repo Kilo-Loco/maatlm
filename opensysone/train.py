@@ -7,6 +7,8 @@
 Options:
   --lora R          train a LoRA adapter of rank R instead of all weights (peft)
   --rule log|brier  proper scoring rule
+  --rps W           add W * ranked-probability-score for `score` questions (ordinal-aware)
+  --consistency W   add W * JS(state, paraphrase) for examples that carry `paraphrases`
   --shuffle-options randomise option order per sample (see data.py)
   --tiny            use the offline random tiny backbone (smoke tests only)
 """
@@ -55,13 +57,14 @@ def maybe_lora(m: SystemOneModel, r: int, alpha: Optional[int] = None):
 
 
 @torch.no_grad()
-def evaluate(m: SystemOneModel, loader, device, rule: str):
+def evaluate(m: SystemOneModel, loader, device, rule: str, rps: float = 0.0, consistency: float = 0.0):
     m.eval()
-    tot, n, per = 0.0, 0, {"choice": [], "score": [], "noul": []}
+    tot, n, per = 0.0, 0, {"choice": [], "score": [], "noul": [], "consistency": []}
     for batch, targets in loader:
+        pairs = getattr(batch, "pairs", None)
         batch = batch.to(device)
         raw = m(batch)
-        loss, pt = batch_loss(raw, targets, batch.layouts, rule)
+        loss, pt = batch_loss(raw, targets, batch.layouts, rule, rps_weight=rps, pairs=pairs, consistency_weight=consistency)
         tot += loss.item()
         n += 1
         for k, v in pt.items():
@@ -85,6 +88,8 @@ def main(argv=None):
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--rule", choices=["log", "brier"], default="log")
     ap.add_argument("--smoothing", type=float, default=0.0)
+    ap.add_argument("--rps", type=float, default=0.5, help="weight of the ranked probability score term for score questions")
+    ap.add_argument("--consistency", type=float, default=0.1, help="weight of the paraphrase-consistency (JS) term; 0 disables")
     ap.add_argument("--shuffle-options", action="store_true")
     ap.add_argument("--lora", type=int, default=0)
     ap.add_argument("--bf16", action="store_true")
@@ -114,11 +119,14 @@ def main(argv=None):
         p.requires_grad_(False)
 
     train_ex = read_jsonl(args.train)
-    train_ds = SystemOneDataset(m, train_ex, shuffle_options=args.shuffle_options, smoothing=args.smoothing, seed=args.seed)
+    use_para = args.consistency > 0 and any(e.paraphrases for e in train_ex)
+    train_ds = SystemOneDataset(
+        m, train_ex, shuffle_options=args.shuffle_options, smoothing=args.smoothing, seed=args.seed, paraphrases=use_para
+    )
     train_dl = DataLoader(train_ds, batch_size=args.batch, shuffle=True, collate_fn=collate_train(m), num_workers=args.workers)
     val_dl = None
     if args.val:
-        val_ds = SystemOneDataset(m, read_jsonl(args.val))
+        val_ds = SystemOneDataset(m, read_jsonl(args.val), paraphrases=use_para)
         val_dl = DataLoader(val_ds, batch_size=args.batch, shuffle=False, collate_fn=collate_train(m), num_workers=args.workers)
 
     params = [p for p in m.parameters() if p.requires_grad]
@@ -142,9 +150,12 @@ def main(argv=None):
     done = False
     while not done:
         for batch, targets in train_dl:
+            pairs = getattr(batch, "pairs", None)
             batch = batch.to(device)
             raw = m(batch)
-            loss, per_type = batch_loss(raw, targets, batch.layouts, args.rule)
+            loss, per_type = batch_loss(
+                raw, targets, batch.layouts, args.rule, rps_weight=args.rps, pairs=pairs, consistency_weight=args.consistency
+            )
             (loss / args.grad_accum).backward()
             micro += 1
             if micro % args.grad_accum != 0:
@@ -159,7 +170,7 @@ def main(argv=None):
                 print(json.dumps(rec), flush=True)
             log.write(json.dumps(rec) + "\n")
             if val_dl is not None and (step % args.eval_every == 0 or step == total_steps):
-                vl, vpt = evaluate(m, val_dl, device, args.rule)
+                vl, vpt = evaluate(m, val_dl, device, args.rule, args.rps, args.consistency)
                 print(json.dumps({"step": step, "val_loss": vl, "val_per_type": vpt}), flush=True)
                 log.write(json.dumps({"step": step, "val_loss": vl, "val_per_type": vpt}) + "\n")
                 if vl < best:

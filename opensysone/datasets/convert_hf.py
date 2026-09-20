@@ -43,12 +43,13 @@ def _noul(instructions: str) -> Dict:
 
 def banking77(split: str) -> Iterable[Example]:
     from datasets import load_dataset
-    ds = load_dataset("PolyAI/banking77", split=split)
-    names = ds.features["label"].names
+    ds = load_dataset("mteb/banking77", split=split)  # PolyAI/banking77 is a script dataset (unsupported now)
+    names = ds.features["label"].names if hasattr(ds.features["label"], "names") else sorted({r["label_text"] for r in ds})
     crit = {n: n.replace("_", " ") for n in names}
     q = _choice("What is the customer's banking intent?", crit)
     for r in ds:
-        yield Example(r["text"], {"intent": q}, {"intent": {"label": r["label"]}})
+        idx = r["label"] if hasattr(ds.features["label"], "names") else names.index(r["label_text"])
+        yield Example(r["text"], {"intent": q}, {"intent": {"label": idx}})
 
 
 def ag_news(split: str) -> Iterable[Example]:

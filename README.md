@@ -72,11 +72,30 @@ annotator-vote frequencies (SNLI ships these), outcome rates, or a frontier-LLM
 ensemble's probabilities (`opensysone/distill.py` — the same reference TypeSafe
 uses in their workflow evals).
 
-**Calibration.** After training, one temperature per primitive is fitted on a
-held-out split (`calibrate.py`); `evaluate.py` reports accuracy, NLL, Brier,
-ECE and reliability bins. `confidence` is a pluggable statistic of the
-distribution (`confidence.py`; default is a margin rule that matches TypeSafe's
-published examples closely).
+**Ordinal and consistency terms.** `score` questions additionally get a ranked
+probability score (squared error between CDFs), so being one level off costs
+less than being three off — log loss and Brier are blind to level order. Rows
+that carry `paraphrases` get a Jensen–Shannon term pulling the state's and the
+paraphrase's distributions together (TypeSafe's "similar answers for similar
+inputs"). Both are proper: the optimum is still the true distribution.
+
+**Calibration.** After training, temperatures are fitted on a held-out split
+(`calibrate.py`), one per primitive and one per (primitive, option count) where
+there is enough data — softmax sharpness depends on how many options share the
+mass. `evaluate.py` reports accuracy, NLL, Brier, ECE, reliability bins and
+paraphrase consistency. `confidence` is TypeSafe's published formula
+`(n·p_max − 1)/(n − 1)` (`confidence.py`; `margin`/`entropy` are alternatives).
+
+**Synthetic data with known truth.** TypeSafe says Jev is trained only on
+synthetic data from a "statistically well-understood" generator. Ours is
+`datasets/generator.py`: six families (policy, routing, multi-hop,
+temporal/numeric, severity, judge) whose worlds are rendered to text and whose
+answer probabilities are computed exactly — hedged evidence ("most likely",
+"unclear") and fuzzy quantities ("about three weeks ago") carry fixed
+probabilities, so calibration can be scored against true probabilities rather
+than a teacher's opinion. Each item can come with a contrastive twin (one fact
+flipped, answer flips), paraphrases (same world, different surface), and traps
+(an injected note arguing for the wrong answer).
 
 ## Layout
 
@@ -86,10 +105,10 @@ opensysone/
   layout.py        tree tokenisation, 4-D attention mask, restarted position ids
   model.py         SystemOneModel: backbone + yes/no decision head + temperatures, predict(), save/load
   confidence.py    confidence statistics
-  losses.py        proper scoring rules (log, brier)
+  losses.py        proper scoring rules (log, brier) + ranked probability score + paraphrase JS
   data.py          JSONL format, dataset, option-shuffle augmentation
   train.py         trainer (full FT or LoRA, bf16, grad checkpointing, cosine LR)
-  calibrate.py     temperature scaling on a held-out split
+  calibrate.py     temperature scaling on a held-out split, per primitive and per option count
   evaluate.py      metrics + reliability bins
   metrics.py       ECE / Brier / NLL (soft-target aware)
   distill.py       teacher-ensemble labelling via OpenAI / Anthropic APIs
@@ -97,7 +116,8 @@ opensysone/
   client.py        tiny Python client
   tiny.py          offline random backbone for tests / smoke runs
   datasets/
-    synthetic.py   generator with known ground-truth probabilities
+    synthetic.py   toy support-ticket generator (smoke tests)
+    generator.py   six-family synthetic engine: exact targets, contrastive twins, paraphrases, traps
     convert_hf.py  banking77, ag_news, trec, emotion, sst5, yelp, boolq, snli (soft), anli
 scripts/
   setup_gpu.sh     one-time setup on a rented GPU
@@ -129,19 +149,41 @@ One request per line; targets per question id:
    OPENSYSONE_MODEL=runs/qwen3-1.7b-base-sysone/final uvicorn opensysone.server:app --host 0.0.0.0 --port 8000
    python scripts/bench.py --model runs/qwen3-1.7b-base-sysone/final
    ```
-4. Optional, and where most of the quality comes from: label *your own* states with
-   a teacher ensemble and train on those.
+4. Optional, and where most of the quality comes from: label real states with a
+   teacher ensemble and train on those. Any OpenAI-compatible endpoint works
+   (OpenRouter shown). Every script below is credit-safe: `--dry-run` prints a
+   token estimate, `--max-items` caps spend, rows are appended as they finish and
+   re-running resumes.
    ```bash
-   export OPENAI_API_KEY=... ANTHROPIC_API_KEY=...
-   python -m opensysone.distill --in my_unlabeled.jsonl --out data/mine/train.jsonl \
-       --teacher openai:<model> --teacher anthropic:<model> --samples 2
-   DATA=data/mine bash scripts/train.sh
+   export OPENAI_API_KEY=$OPENROUTER_API_KEY OPENAI_BASE_URL=https://openrouter.ai/api/v1
+   python -m opensysone.datasets.unlabeled --out data/real --n 1500 --eval 300   # real tickets, 10 questions each
+   # (a) the reference eval: both frontier teachers, 2 samples each — TypeSafe's own eval recipe
+   python -m opensysone.distill --in data/real/eval.jsonl --out data/real/eval.labeled.jsonl \
+       --teacher openai:anthropic/claude-fable-5.1 --teacher openai:openai/gpt-6-astra --samples 2
+   # (b) training labels: one frontier teacher, one sample, as many states as the budget allows
+   python -m opensysone.distill --in data/real/train.jsonl --out data/real/train.labeled.jsonl \
+       --teacher openai:anthropic/claude-fable-5.1 --max-items 1000
+   # (c) cheap surface rewrites of generator rows (labels untouched)
+   python -m opensysone.datasets.rewrite --in data/gen/train.jsonl --out data/gen/train.rewritten.jsonl \
+       --model anthropic/claude-haiku-4.5 --max-items 4000
    ```
-   `my_unlabeled.jsonl` only needs `state` and `questions`.
+   Spend order when credits are scarce: (a) first — it is small, fixed, and is the
+   only way to measure "how close to Jev" the way TypeSafe does; then (b); (c)
+   last with the cheapest model. Never label JevBench items (its hard tier was
+   authored by the same frontier models). `my_unlabeled.jsonl` only needs `state`
+   and `questions`; put many questions on each state, since one teacher call
+   labels all of them.
 
 Everything except the GPU steps runs offline: `python -m pytest tests` and the
-synthetic smoke run (`python -m opensysone.datasets.synthetic --out data/synth --n 3000`,
+synthetic smoke run (`python -m opensysone.datasets.generator --out data/gen --n 3000`,
 then `python -m opensysone.train --tiny ...`) work on a laptop CPU.
+
+The recommended data mix for a real run is the generator (tens of thousands of
+rows, `--n 20000` or more), the public converters (`convert_hf.py`, for
+breadth and for the soft annotator-vote targets in SNLI), and a distilled set
+of your own states (`distill.py`). Evaluate on the generator's held-out split
+(true-probability ECE), on `data/jevbench` (the community benchmark for
+Jev-class models, same wire format), and on your own distilled validation set.
 
 ## Backbone choice
 

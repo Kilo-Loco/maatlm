@@ -34,6 +34,8 @@ class Example:
     state: Any
     questions: Dict[str, Any]
     targets: Dict[str, Any]
+    paraphrases: Optional[List[Any]] = None  # alternative states with identical answers (consistency term)
+    meta: Optional[Dict[str, Any]] = None  # free-form provenance (family, group, ...); never shown to the model
 
 
 def read_jsonl(path: str) -> List[Example]:
@@ -44,14 +46,19 @@ def read_jsonl(path: str) -> List[Example]:
             if not line:
                 continue
             d = json.loads(line)
-            out.append(Example(d["state"], d["questions"], d["targets"]))
+            out.append(Example(d["state"], d["questions"], d["targets"], d.get("paraphrases"), d.get("meta")))
     return out
 
 
 def write_jsonl(path: str, examples: Sequence[Example]) -> None:
     with open(path, "w") as f:
         for e in examples:
-            f.write(json.dumps({"state": e.state, "questions": e.questions, "targets": e.targets}, ensure_ascii=False) + "\n")
+            d: Dict[str, Any] = {"state": e.state, "questions": e.questions, "targets": e.targets}
+            if e.paraphrases:
+                d["paraphrases"] = e.paraphrases
+            if e.meta:
+                d["meta"] = e.meta
+            f.write(json.dumps(d, ensure_ascii=False) + "\n")
 
 
 def target_tensor(q: Dict[str, Any], t: Dict[str, Any], smoothing: float = 0.0) -> torch.Tensor:
@@ -81,17 +88,27 @@ class SystemOneDataset(Dataset):
     when a teacher's labels were themselves order-biased.
     """
 
-    def __init__(self, model, examples: Sequence[Example], shuffle_options: bool = False, smoothing: float = 0.0, seed: int = 0):
+    def __init__(
+        self,
+        model,
+        examples: Sequence[Example],
+        shuffle_options: bool = False,
+        smoothing: float = 0.0,
+        seed: int = 0,
+        paraphrases: bool = False,
+    ):
         self.model = model
         self.examples = list(examples)
         self.shuffle_options = shuffle_options
         self.smoothing = smoothing
+        self.paraphrases = paraphrases
         self.rng = random.Random(seed)
 
     def __len__(self) -> int:
         return len(self.examples)
 
-    def __getitem__(self, i: int) -> Tuple[Layout, List[torch.Tensor]]:
+    def __getitem__(self, i: int) -> List[Tuple[Layout, List[torch.Tensor]]]:
+        """Returns 1 item, or 2 (state + one sampled paraphrase, same shuffled questions)."""
         ex = self.examples[i]
         questions, targets = {}, []
         for qid, q in ex.questions.items():
@@ -106,12 +123,29 @@ class SystemOneDataset(Dataset):
                 tt = tt[perm]
             questions[qid] = q
             targets.append(tt)
-        return self.model.layout(ex.state, questions), targets
+        out = [(self.model.layout(ex.state, questions), targets)]
+        if self.paraphrases and ex.paraphrases:
+            alt = self.rng.choice(ex.paraphrases)
+            out.append((self.model.layout(alt, questions), targets))
+        return out
 
 
 def collate_train(model):
+    """Flattens the per-example item lists; records (i, j) index pairs of paraphrases."""
+
     def _fn(items):
-        layouts = [it[0] for it in items]
-        targets = [it[1] for it in items]
-        return model.collate(layouts), targets
+        layouts, targets, pairs = [], [], []
+        for group in items:
+            if isinstance(group, tuple):  # backwards compat: a single (layout, targets)
+                group = [group]
+            base = len(layouts)
+            for lay, tg in group:
+                layouts.append(lay)
+                targets.append(tg)
+            if len(group) == 2:
+                pairs.append((base, base + 1))
+        batch = model.collate(layouts)
+        batch.pairs = pairs
+        return batch, targets
+
     return _fn

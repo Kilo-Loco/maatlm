@@ -177,12 +177,15 @@ class Batch:
     attn_mask: torch.Tensor  # [B, 1, L, L] bool
     layouts: List[Layout]
 
+    pairs: Optional[List[tuple]] = None  # (i, j) paraphrase pairs, set by data.collate_train
+
     def to(self, device) -> "Batch":
         return Batch(
             input_ids=self.input_ids.to(device),
             position_ids=self.position_ids.to(device),
             attn_mask=self.attn_mask.to(device),
             layouts=self.layouts,
+            pairs=self.pairs,
         )
 
 

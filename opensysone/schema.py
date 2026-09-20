@@ -132,7 +132,7 @@ Answer = Union[ChoiceAnswer, ScoreAnswer, NoulAnswer]
 
 class Usage(BaseModel):
     input_tokens: int
-    output_tokens: int = 0  # there is no generation; kept for API compatibility
+    output_tokens: int = 0  # no generation; counts decision slots read out (Jev also reports a small nonzero number)
 
 
 class SystemOneResponse(BaseModel):

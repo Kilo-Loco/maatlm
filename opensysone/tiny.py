@@ -17,7 +17,7 @@ from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedTokenizerFa
 from .model import SystemOneModel
 
 _CORPUS = [
-    "### State\n### Question\n### Statement\nCandidate answer: Candidate level: Answer (yes/no): yes no",
+    "### State\n### Question\n### Statement\nCandidate answer: Candidate level: Answer (yes/no): yes no Yes No",
     "Is this candidate the correct answer? Does the state match this level? Is this statement true of the state?",
     "The quick brown fox jumps over the lazy dog. My running shoes arrived in the wrong size, can I swap them?",
     "billing shipping returns refund exchange delayed damaged angry calm frustrated positive negative neutral",

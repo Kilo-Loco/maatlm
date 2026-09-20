@@ -81,7 +81,7 @@ def test_type_safety(model):
     assert math.isclose(sum(d.probabilities.values()), 1.0, abs_tol=2e-3)
     assert set(s.probabilities) == {"0", "1", "2"} and 0.0 <= s.score <= 2.0
     assert 0.0 <= n.noul <= 1.0
-    assert r.usage.output_tokens == 0
+    assert r.usage.output_tokens == 3 + 3 + 1  # one readout slot per option / level / statement
 
 
 def test_schema_limits():

@@ -17,3 +17,7 @@ python -m pytest tests -q
 
 # pull the public data mix (needs network; ~10-20 min the first time)
 python -m opensysone.datasets.convert_hf --out data/public --cap 20000 --val-cap 2000
+python -m opensysone.datasets.generator  --out data/gen --n 20000 --seed 0
+# merged train set: public breadth + generator truth (val/calib stay separate so ECE-vs-truth is reportable)
+mkdir -p data/mix && cat data/public/train.jsonl data/gen/train.jsonl | shuf --random-source=<(yes) > data/mix/train.jsonl \
+  && cp data/gen/calib.jsonl data/mix/calib.jsonl && cat data/public/val.jsonl data/gen/val.jsonl > data/mix/val.jsonl

@@ -1,5 +1,9 @@
 __pycache__/
 *.egg-info/
-data/
+data/*
 runs/
 .pytest_cache/
+.env
+# paid teacher labels are small and cost money: keep them in git
+!data/real/
+!data/real/*.jsonl

@@ -15,6 +15,7 @@ declared options (or a single probability) — that is the type-safety guarantee
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -44,10 +45,10 @@ class SystemOneModel(nn.Module):
         self,
         backbone: PreTrainedModel,
         tokenizer,
-        yes_token: str = " yes",
-        no_token: str = " no",
-        confidence: str = "margin",
-        max_state_tokens: Optional[int] = 4096,
+        yes_token: str = " Yes",
+        no_token: str = " No",
+        confidence: str = "top1",
+        max_state_tokens: Optional[int] = 32768,
         model_name: str = "opensysone-latest",
     ):
         super().__init__()
@@ -55,16 +56,29 @@ class SystemOneModel(nn.Module):
         self.tokenizer = tokenizer
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
-        self.yes_id = tokenizer(yes_token, add_special_tokens=False)["input_ids"][0]
-        self.no_id = tokenizer(no_token, add_special_tokens=False)["input_ids"][0]
-        assert self.yes_id != self.no_id, "yes/no tokens collapse to the same id"
+        # Pretrained base models put their mass on " Yes"/" No" after "Answer (yes/no):";
+        # fall back to the lowercase pair if the tokenizer splits the capitalised ones.
+        self.yes_id, self.no_id = self._resolve_pair(tokenizer, yes_token, no_token)
         self.confidence_name = confidence
         self.confidence_fn = CONFIDENCE_FNS[confidence]
         self.max_state_tokens = max_state_tokens
         self.model_name = model_name
-        # per-type temperature (log-parameterised), fitted post-hoc by calibrate.py
+        # temperatures (log-parameterised), fitted post-hoc by calibrate.py. Keys are the
+        # primitive ("choice") or primitive + option count ("choice:3"); the finer key wins.
         self.log_temp = nn.ParameterDict({t: nn.Parameter(torch.zeros(())) for t in TYPES})
         self.decision_head = self._DecisionHead(self)
+
+    @staticmethod
+    def _resolve_pair(tokenizer, yes_token: str, no_token: str) -> Tuple[int, int]:
+        for a, b in ((yes_token, no_token), (yes_token.lower(), no_token.lower()), (yes_token.strip(), no_token.strip())):
+            ya = tokenizer(a, add_special_tokens=False)["input_ids"]
+            nb = tokenizer(b, add_special_tokens=False)["input_ids"]
+            if len(ya) == 1 and len(nb) == 1 and ya[0] != nb[0]:
+                return ya[0], nb[0]
+        ya = tokenizer(yes_token, add_special_tokens=False)["input_ids"][0]
+        nb = tokenizer(no_token, add_special_tokens=False)["input_ids"][0]
+        assert ya != nb, "yes/no tokens collapse to the same id"
+        return ya, nb
 
     # ------------------------------------------------------------------ head
     class _DecisionHead(nn.Module):
@@ -84,8 +98,24 @@ class SystemOneModel(nn.Module):
             return (logits[:, 0] - logits[:, 1]).float()
 
     # --------------------------------------------------------------- helpers
-    def temperature(self, qtype: str) -> torch.Tensor:
+    @staticmethod
+    def temp_key(qtype: str, n: Optional[int] = None) -> str:
+        return qtype if (n is None or qtype == "noul") else f"{qtype}:{n}"
+
+    def temperature(self, qtype: str, n: Optional[int] = None) -> torch.Tensor:
+        key = self.temp_key(qtype, n)
+        if key in self.log_temp:
+            return self.log_temp[key].exp()
         return self.log_temp[qtype].exp()
+
+    def set_temperature(self, key: str, value: float) -> None:
+        if key not in self.log_temp:
+            self.log_temp[key] = nn.Parameter(torch.zeros(()), requires_grad=False)
+        with torch.no_grad():
+            self.log_temp[key].fill_(math.log(value))
+
+    def temperatures(self) -> Dict[str, float]:
+        return {k: float(v.detach().exp()) for k, v in self.log_temp.items()}
 
     def layout(self, state, questions: Dict[str, Any]) -> Layout:
         qs = {k: parse_question(v) for k, v in questions.items()}
@@ -139,10 +169,9 @@ class SystemOneModel(nn.Module):
 
     # ---------------------------------------------------------- probabilities
     def probabilities(self, logits: torch.Tensor, qtype: str) -> torch.Tensor:
-        t = self.temperature(qtype)
         if qtype == "noul":
-            return torch.sigmoid(logits / t)
-        return F.softmax(logits / t, dim=-1)
+            return torch.sigmoid(logits / self.temperature(qtype))
+        return F.softmax(logits / self.temperature(qtype, logits.numel()), dim=-1)
 
     @torch.no_grad()
     def predict(self, state, questions: Dict[str, Any], model_name: Optional[str] = None) -> SystemOneResponse:
@@ -184,7 +213,8 @@ class SystemOneModel(nn.Module):
                 SystemOneResponse(
                     model=model_name or self.model_name,
                     answers=answers,
-                    usage=Usage(input_tokens=lay.n_tokens, output_tokens=0),
+                    # no generation: output_tokens counts the decision slots read out
+                    usage=Usage(input_tokens=lay.n_tokens, output_tokens=sum(len(qh.positions) for qh in lay.heads)),
                 )
             )
         return responses
@@ -200,7 +230,7 @@ class SystemOneModel(nn.Module):
             "confidence": self.confidence_name,
             "max_state_tokens": self.max_state_tokens,
             "model_name": self.model_name,
-            "log_temp": {t: float(self.log_temp[t].detach()) for t in TYPES},
+            "log_temp": {k: float(v.detach()) for k, v in self.log_temp.items()},
         }
         with open(os.path.join(path, SYSONE_CONFIG), "w") as f:
             json.dump(cfg, f, indent=2)
@@ -226,14 +256,13 @@ class SystemOneModel(nn.Module):
         m = cls(
             backbone,
             tokenizer,
-            confidence=cfg.get("confidence", kwargs.pop("confidence", "margin")),
-            max_state_tokens=cfg.get("max_state_tokens", kwargs.pop("max_state_tokens", 4096)),
+            confidence=cfg.get("confidence", kwargs.pop("confidence", "top1")),
+            max_state_tokens=cfg.get("max_state_tokens", kwargs.pop("max_state_tokens", 32768)),
             model_name=cfg.get("model_name", kwargs.pop("model_name", "opensysone-latest")),
             **kwargs,
         )
         for t, v in cfg.get("log_temp", {}).items():
-            with torch.no_grad():
-                m.log_temp[t].fill_(v)
+            m.set_temperature(t, math.exp(v))
         if device:
             m.to(device)
         return m

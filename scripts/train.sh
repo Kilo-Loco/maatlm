@@ -15,18 +15,21 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BASE=${BASE:-Qwen/Qwen3-1.7B-Base}
-DATA=${DATA:-data/public}
+DATA=${DATA:-data/mix}    # public converters + generator, built by setup_gpu.sh
 OUT=${OUT:-runs/$(basename "$BASE" | tr '[:upper:]' '[:lower:]')-sysone}
 LORA=${LORA:-16}
 EPOCHS=${EPOCHS:-2}
 BATCH=${BATCH:-8}
 ACCUM=${ACCUM:-4}
 LR=${LR:-$([ "$LORA" = "0" ] && echo 1e-5 || echo 1e-4)}
+RPS=${RPS:-0.5}                 # ranked-probability-score weight for ordinal `score` questions
+CONSISTENCY=${CONSISTENCY:-0.1} # paraphrase-consistency (JS) weight; only acts on rows with `paraphrases`
 
 python -m opensysone.train \
   --base "$BASE" --train "$DATA/train.jsonl" --val "$DATA/val.jsonl" --out "$OUT" \
   --epochs "$EPOCHS" --batch "$BATCH" --grad-accum "$ACCUM" --lr "$LR" \
   --lora "$LORA" --bf16 --grad-checkpoint --shuffle-options --rule log \
+  --rps "$RPS" --consistency "$CONSISTENCY" \
   --eval-every 250 --workers 4
 
 # temperature scaling on the held-out calibration split (never on train)

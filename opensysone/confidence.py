@@ -1,10 +1,9 @@
 """Confidence: a scalar summary of how peaked a probability distribution is.
 
-TypeSafe does not publish its formula and says you may substitute your own.
-The default here, `margin`, is (p_top1 - p_top2) ** 0.7, which lands close to
-the worked examples in their docs (e.g. {0.7, 0.3} -> 0.54, {0.92, 0.08} -> 0.88,
-{0.37, 0.29, 0.24, 0.10} -> 0.16). `entropy` and `top1` are provided as
-alternatives; pick by name in `SystemOneModel(confidence="...")`.
+The default, `top1`, is the formula TypeSafe ships in their confidence docs:
+(n * p_max - 1) / (n - 1), clamped to [0, 1] — 0 at uniform, 1 at a delta
+(their quickstart's {0.85, 0.15, 0} -> 0.78 and {0.9, 0.06, 0.04} -> 0.85 match).
+`margin` and `entropy` are alternatives; pick by name in `SystemOneModel(confidence="...")`.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ def top1(p: Sequence[float]) -> float:
     n = len(p)
     if n == 1:
         return 1.0
-    return float((max(p) - 1.0 / n) / (1.0 - 1.0 / n))
+    return float(min(1.0, max(0.0, (max(p) - 1.0 / n) / (1.0 - 1.0 / n))))
 
 
 CONFIDENCE_FNS = {"margin": margin, "entropy": entropy, "top1": top1}
