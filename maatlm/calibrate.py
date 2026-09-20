@@ -1,13 +1,13 @@
 """Post-hoc temperature scaling, one temperature per primitive type AND per
 (primitive, option count) where the calibration set has enough examples.
 
-    python -m opensysone.calibrate --model runs/x/final --data data/calib.jsonl [--out runs/x/calibrated]
+    python -m maatlm.calibrate --model runs/x/final --data data/calib.jsonl [--out runs/x/calibrated]
 
 Fits T_choice, T_score, T_noul (plus T_choice:3, T_score:5, ... when >= --min-count
 records exist for that option count; softmax sharpness depends on how many options
 share the mass, so a single per-type temperature is systematically off for the
 counts it was not fitted on) by minimising NLL on a held-out set (never the
-training set), writes them into the checkpoint's opensysone_config.json, and
+training set), writes them into the checkpoint's maatlm_config.json, and
 prints before/after ECE. Temperature scaling cannot change the argmax, so
 accuracy is untouched; it only fixes systematic over/under-confidence.
 """

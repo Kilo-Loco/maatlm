@@ -66,7 +66,7 @@ def tiny_model(
     )
     cfg._attn_implementation = attn_implementation
     backbone = AutoModelForCausalLM.from_config(cfg)
-    m = SystemOneModel(backbone, tokenizer, max_state_tokens=1024, model_name="opensysone-tiny")
+    m = SystemOneModel(backbone, tokenizer, max_state_tokens=1024, model_name="maatlm-tiny")
     if save_to:
         m.save(save_to)
     return m

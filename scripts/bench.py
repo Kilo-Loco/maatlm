@@ -10,7 +10,7 @@ import time
 
 import torch
 
-from opensysone.model import SystemOneModel
+from maatlm.model import SystemOneModel
 
 
 def main():

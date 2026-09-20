@@ -9,7 +9,7 @@ keeping every fact, number, date, name and hedge word ("confirmed", "most
 likely", "unclear", "doubtful") intact. `targets` and `questions` are copied
 through untouched.
 
-    OPENAI_API_KEY=$OPENROUTER_API_KEY python -m opensysone.datasets.rewrite \
+    OPENAI_API_KEY=$OPENROUTER_API_KEY python -m maatlm.datasets.rewrite \
         --in data/gen/train.jsonl --out data/gen/train.rewritten.jsonl \
         --base-url https://openrouter.ai/api/v1 --model anthropic/claude-haiku-4.5 \
         --max-items 4000 --dry-run          # estimate cost first, then drop --dry-run

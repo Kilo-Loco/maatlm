@@ -7,8 +7,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 
 def test_server_roundtrip(monkeypatch):
-    monkeypatch.setenv("OPENSYSONE_MODEL", "tiny")
-    from opensysone import server
+    monkeypatch.setenv("MAATLM_MODEL", "tiny")
+    from maatlm import server
 
     with TestClient(server.app) as c:
         r = c.post(

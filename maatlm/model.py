@@ -36,7 +36,7 @@ from .schema import (
     parse_question,
 )
 
-SYSONE_CONFIG = "opensysone_config.json"
+SYSONE_CONFIG = "maatlm_config.json"
 TYPES = ("choice", "score", "noul")
 
 
@@ -49,7 +49,7 @@ class SystemOneModel(nn.Module):
         no_token: str = " No",
         confidence: str = "top1",
         max_state_tokens: Optional[int] = 32768,
-        model_name: str = "opensysone-latest",
+        model_name: str = "maatlm-latest",
     ):
         super().__init__()
         self.backbone = backbone
@@ -258,7 +258,7 @@ class SystemOneModel(nn.Module):
             tokenizer,
             confidence=cfg.get("confidence", kwargs.pop("confidence", "top1")),
             max_state_tokens=cfg.get("max_state_tokens", kwargs.pop("max_state_tokens", 32768)),
-            model_name=cfg.get("model_name", kwargs.pop("model_name", "opensysone-latest")),
+            model_name=cfg.get("model_name", kwargs.pop("model_name", "maatlm-latest")),
             **kwargs,
         )
         for t, v in cfg.get("log_temp", {}).items():

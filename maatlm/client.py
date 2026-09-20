@@ -1,6 +1,6 @@
 """Minimal Python client mirroring the TypeSafe SDK surface.
 
-    from opensysone.client import Client, Choice, Score, Noul
+    from maatlm.client import Client, Choice, Score, Noul
     c = Client("http://localhost:8000")
     r = c.system_one(state=ticket, questions={"dept": Choice("Which team?", {"billing": None, "returns": None})})
     r.answers["dept"].choice, r.answers["dept"].confidence
@@ -38,7 +38,7 @@ class Noul:
 
 
 class Client:
-    def __init__(self, base_url: str = "http://localhost:8000", model: str = "opensysone-latest", timeout: float = 30.0):
+    def __init__(self, base_url: str = "http://localhost:8000", model: str = "maatlm-latest", timeout: float = 30.0):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout

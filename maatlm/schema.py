@@ -98,7 +98,7 @@ def state_to_text(state: State) -> str:
 class SystemOneRequest(BaseModel):
     state: State
     questions: Dict[str, Question]
-    model: str = "opensysone-latest"
+    model: str = "maatlm-latest"
 
     @model_validator(mode="after")
     def _non_empty(self) -> "SystemOneRequest":

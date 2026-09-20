@@ -25,7 +25,7 @@ LR=${LR:-$([ "$LORA" = "0" ] && echo 1e-5 || echo 1e-4)}
 RPS=${RPS:-0.5}                 # ranked-probability-score weight for ordinal `score` questions
 CONSISTENCY=${CONSISTENCY:-0.1} # paraphrase-consistency (JS) weight; only acts on rows with `paraphrases`
 
-python -m opensysone.train \
+python -m maatlm.train \
   --base "$BASE" --train "$DATA/train.jsonl" --val "$DATA/val.jsonl" --out "$OUT" \
   --epochs "$EPOCHS" --batch "$BATCH" --grad-accum "$ACCUM" --lr "$LR" \
   --lora "$LORA" --bf16 --grad-checkpoint --shuffle-options --rule log \
@@ -33,10 +33,10 @@ python -m opensysone.train \
   --eval-every 250 --workers 4
 
 # temperature scaling on the held-out calibration split (never on train)
-python -m opensysone.calibrate --model "$OUT/final" --data "$DATA/calib.jsonl" --bf16
+python -m maatlm.calibrate --model "$OUT/final" --data "$DATA/calib.jsonl" --bf16
 
 # report on the untouched validation split
-python -m opensysone.evaluate --model "$OUT/final" --data "$DATA/val.jsonl" --bf16 --out "$OUT/report.json"
+python -m maatlm.evaluate --model "$OUT/final" --data "$DATA/val.jsonl" --bf16 --out "$OUT/report.json"
 
 echo
-echo "serve with:  OPENSYSONE_MODEL=$OUT/final uvicorn opensysone.server:app --host 0.0.0.0 --port 8000"
+echo "serve with:  MAATLM_MODEL=$OUT/final uvicorn maatlm.server:app --host 0.0.0.0 --port 8000"

@@ -1,6 +1,6 @@
 """Evaluate a checkpoint on a JSONL file: accuracy, NLL, Brier, ECE, reliability bins.
 
-    python -m opensysone.evaluate --model runs/x/final --data data/val.jsonl [--out report.json]
+    python -m maatlm.evaluate --model runs/x/final --data data/val.jsonl [--out report.json]
 
 Also usable as a library: `collect(model, examples)` returns raw logits + targets,
 which `calibrate.py` reuses for temperature fitting.

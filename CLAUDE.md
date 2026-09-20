@@ -1,4 +1,8 @@
-# opensysone — guide for Claude Code
+# maatlm — guide for Claude Code
+
+Named for Ma'at, the feather the heart is weighed against. Package, env vars and
+checkpoint config are `maatlm` / `MAATLM_*` / `maatlm_config.json`; the HTTP path
+`/v1/systemone` is deliberately unchanged for TypeSafe wire compatibility.
 
 Open-source "System One" decision model in the spirit of TypeSafe AI's Jev:
 state + typed questions in → typed decisions with calibrated probabilities out,
@@ -10,17 +14,17 @@ design; this file is the working contract.
 ```bash
 pip install -e ".[train,distill,dev]"          # first time
 python -m pytest tests -q                       # structural invariants + server round-trip; runs OFFLINE in ~5 s
-python -m opensysone.datasets.synthetic --out data/synth --n 3000            # offline toy data with known true probs
-python -m opensysone.datasets.generator --out data/gen --n 20000               # the real synthetic engine: 6 families, exact targets,
+python -m maatlm.datasets.synthetic --out data/synth --n 3000            # offline toy data with known true probs
+python -m maatlm.datasets.generator --out data/gen --n 20000               # the real synthetic engine: 6 families, exact targets,
                                                                                #   contrastive twins, paraphrases, traps (see generator.py)
-python -m opensysone.train --tiny --train data/synth/train.jsonl --val data/synth/val.jsonl \
+python -m maatlm.train --tiny --train data/synth/train.jsonl --val data/synth/val.jsonl \
     --out runs/tiny --epochs 3 --batch 16 --lr 3e-3 --workers 0 --attn eager   # CPU smoke run (~6 min)
-python -m opensysone.calibrate --model runs/tiny/final --data data/synth/calib.jsonl --out runs/tiny/calibrated
-python -m opensysone.evaluate  --model runs/tiny/calibrated --data data/synth/val.jsonl
-OPENSYSONE_MODEL=runs/tiny/calibrated uvicorn opensysone.server:app --port 8000
-python -m opensysone.datasets.unlabeled --out data/real --n 1500 --eval 300   # real tickets + 10-question pack (needs HF)
-python -m opensysone.distill ... --dry-run / --max-items N                     # teacher labels via any OpenAI-compatible URL
-python -m opensysone.datasets.rewrite ... --dry-run / --max-items N            # cheap-LLM surface rewrites, labels untouched
+python -m maatlm.calibrate --model runs/tiny/final --data data/synth/calib.jsonl --out runs/tiny/calibrated
+python -m maatlm.evaluate  --model runs/tiny/calibrated --data data/synth/val.jsonl
+MAATLM_MODEL=runs/tiny/calibrated uvicorn maatlm.server:app --port 8000
+python -m maatlm.datasets.unlabeled --out data/real --n 1500 --eval 300   # real tickets + 10-question pack (needs HF)
+python -m maatlm.distill ... --dry-run / --max-items N                     # teacher labels via any OpenAI-compatible URL
+python -m maatlm.datasets.rewrite ... --dry-run / --max-items N            # cheap-LLM surface rewrites, labels untouched
 bash scripts/setup_gpu.sh && bash scripts/train.sh                          # real run on a GPU box (see sizing table in train.sh)
 ```
 
@@ -72,7 +76,7 @@ primitive on a held-out split. `server.py` exposes the TypeSafe-compatible
 - Paid-API scripts (`distill.py`, `datasets/rewrite.py`) must stay credit-safe: dry-run estimate, `--max-items`,
   append-as-you-go output, resume on rerun. `data/real/eval.jsonl` is the fixed reference eval — never train on it,
   never label JevBench items.
-- Data/runs are gitignored; checkpoints are HF `save_pretrained` dirs plus `opensysone_config.json`.
+- Data/runs are gitignored; checkpoints are HF `save_pretrained` dirs plus `maatlm_config.json`.
 
 ## Known gaps / good next tasks (roughly in priority order)
 

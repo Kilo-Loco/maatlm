@@ -1,7 +1,7 @@
 """Convert public Hugging Face datasets into System One JSONL.
 
     pip install datasets
-    python -m opensysone.datasets.convert_hf --out data/public --cap 20000 \
+    python -m maatlm.datasets.convert_hf --out data/public --cap 20000 \
         --sets banking77 ag_news trec emotion sst5 yelp boolq snli anli
 
 Each converter maps a labelled dataset onto one primitive with *descriptive*

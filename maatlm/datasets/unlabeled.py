@@ -9,7 +9,7 @@ Sources (public, no script datasets):
   Tobi-Bueck/customer-support-tickets   real multi-field tickets (subject, body, queue, priority, type); English rows only
   bitext/Bitext-customer-support-...     short customer utterances with an intent label
 
-    python -m opensysone.datasets.unlabeled --out data/real --n 1500 --eval 300
+    python -m maatlm.datasets.unlabeled --out data/real --n 1500 --eval 300
     # -> data/real/eval.jsonl (fixed, seed-chosen; label with BOTH frontier teachers, never train on it)
     # -> data/real/train.jsonl (the rest)
 

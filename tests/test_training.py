@@ -7,9 +7,9 @@ import random
 import pytest
 import torch
 
-from opensysone.confidence import top1
-from opensysone.losses import batch_loss, decision_loss, js_divergence, ranked_probability_score
-from opensysone.tiny import tiny_model
+from maatlm.confidence import top1
+from maatlm.losses import batch_loss, decision_loss, js_divergence, ranked_probability_score
+from maatlm.tiny import tiny_model
 
 
 def _fit(target, rps_weight, steps=400):
@@ -72,7 +72,7 @@ def test_temperatures_survive_save_load(tmp_path):
     m = tiny_model()
     m.set_temperature("score:5", 1.7)
     m.save(str(tmp_path))
-    from opensysone.model import SystemOneModel
+    from maatlm.model import SystemOneModel
 
     m2 = SystemOneModel.from_pretrained(str(tmp_path))
     assert math.isclose(m2.temperature("score", 5).item(), 1.7, rel_tol=1e-5)
@@ -86,7 +86,7 @@ def test_confidence_matches_typesafe_formula():
 
 
 def test_paraphrase_dataset_yields_pairs():
-    from opensysone.data import Example, SystemOneDataset, collate_train
+    from maatlm.data import Example, SystemOneDataset, collate_train
 
     m = tiny_model()
     ex = Example(
@@ -104,7 +104,7 @@ def test_paraphrase_dataset_yields_pairs():
 
 
 def _gen(n=240, seed=0, **kw):
-    from opensysone.datasets.generator import generate
+    from maatlm.datasets.generator import generate
 
     args = argparse.Namespace(
         n=n, seed=seed, families=None, contrast=0.5, paraphrases=2, trap=0.2, json_state=0.4, max_options=8
@@ -114,8 +114,8 @@ def _gen(n=240, seed=0, **kw):
 
 
 def test_generator_targets_are_valid_distributions():
-    from opensysone.data import target_tensor
-    from opensysone.schema import SystemOneRequest
+    from maatlm.data import target_tensor
+    from maatlm.schema import SystemOneRequest
 
     exs = _gen()
     fams = {e.meta["family"] for e in exs}
@@ -176,7 +176,7 @@ def test_generator_paraphrases_share_targets_and_traps_do_not_move_them():
 
 
 def test_generator_split_keeps_groups_together():
-    from opensysone.datasets.generator import split_by_group
+    from maatlm.datasets.generator import split_by_group
 
     exs = _gen(contrast=1.0)
     train, calib, val = split_by_group(exs, random.Random(1), 0.1, 0.1)
@@ -189,7 +189,7 @@ def test_generator_split_keeps_groups_together():
 
 
 def test_rewrite_acceptance_keeps_facts():
-    from opensysone.datasets.rewrite import _accept
+    from maatlm.datasets.rewrite import _accept
 
     src = "Confirmed: a receipt is on file. Purchased on 2026-03-02. Order total: $480. It's doubtful that the item is unused."
     good = "Hi team, quick one: we've confirmed the receipt is on file, the purchase was on 2026-03-02 and the order came to $480. It's doubtful the item is unused though."
@@ -202,8 +202,8 @@ def test_rewrite_acceptance_keeps_facts():
 
 
 def test_distill_prompt_and_parse_roundtrip_carry_meta():
-    from opensysone.data import Example
-    from opensysone.distill import build_prompt, parse_teacher
+    from maatlm.data import Example
+    from maatlm.distill import build_prompt, parse_teacher
 
     ex = Example("Charged twice.", {"q": {"type": "choice", "instructions": "Team?", "criteria": {"billing": None, "other": None}}, "n": {"type": "noul", "instructions": "Refund?"}}, {}, ["Billed two times."], {"source": "x"})
     prompt = build_prompt(ex)
@@ -213,8 +213,8 @@ def test_distill_prompt_and_parse_roundtrip_carry_meta():
 
 
 def test_unlabeled_pack_is_schema_valid():
-    from opensysone.datasets.unlabeled import PACK
-    from opensysone.schema import SystemOneRequest
+    from maatlm.datasets.unlabeled import PACK
+    from maatlm.schema import SystemOneRequest
 
     SystemOneRequest(state={"subject": "s", "message": "m"}, questions=PACK)
     assert len(PACK) >= 10 and {q["type"] for q in PACK.values()} == {"choice", "score", "noul"}

@@ -28,7 +28,7 @@ Uncertainty is *constructed*, never guessed: evidence carries a certainty class
 text renders with fixed phrasings, and fuzzy quantities ("about three weeks") map
 to fixed ranges. Targets are computed exactly from those numbers.
 
-    python -m opensysone.datasets.generator --out data/gen --n 20000 --seed 0
+    python -m maatlm.datasets.generator --out data/gen --n 20000 --seed 0
 """
 
 from __future__ import annotations

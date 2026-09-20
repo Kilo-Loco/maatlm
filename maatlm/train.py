@@ -1,6 +1,6 @@
 """Train a SystemOneModel on JSONL decisions with a proper scoring rule.
 
-    python -m opensysone.train \
+    python -m maatlm.train \
         --base Qwen/Qwen3-1.7B-Base --train data/train.jsonl --val data/val.jsonl \
         --out runs/jev-open-1.7b --epochs 2 --batch 8 --grad-accum 4 --lr 1e-5 --bf16
 

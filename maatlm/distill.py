@@ -2,7 +2,7 @@
 ensemble of frontier LLMs, producing soft probability targets.
 
     export OPENAI_API_KEY=... ANTHROPIC_API_KEY=...
-    python -m opensysone.distill --in data/unlabeled.jsonl --out data/train_teacher.jsonl \
+    python -m maatlm.distill --in data/unlabeled.jsonl --out data/train_teacher.jsonl \
         --teacher openai:gpt-5.6 --teacher anthropic:claude-fable-5-1 --samples 2 --concurrency 8
 
 Input lines need only {"state": ..., "questions": {...}}; existing "targets" are

@@ -1,7 +1,8 @@
-# opensysone
+# maatlm
 
-An open-source **System One** style decision model, in the spirit of
-[TypeSafe AI's Jev](https://typesafe.ai): send a *state* and a set of *typed
+*Ma'at: the feather the heart is weighed against.* An open-source **System One**
+style decision model, in the spirit of [TypeSafe AI's Jev](https://typesafe.ai)
+(independent project, not affiliated with TypeSafe AI): send a *state* and a set of *typed
 questions*, get back typed decisions with calibrated probabilities — in a single
 parallel forward pass, with no text generation and therefore no possibility of a
 type error.
@@ -13,7 +14,7 @@ replication of their weights or their unpublished algorithm, and a 1–4B model
 trained on public data will not match their reported intelligence.
 
 ```python
-from opensysone.client import Client, Choice, Score, Noul
+from maatlm.client import Client, Choice, Score, Noul
 
 r = Client("http://localhost:8000").system_one(
     state="Shoes arrived two weeks late and in the wrong size. Also I see two charges on my card.",
@@ -41,7 +42,7 @@ option / level is a child of its question. A custom 4-D attention mask lets ever
 token attend causally to itself and fully to its ancestors — and to nothing
 else. Position ids restart for every branch, so each option sees exactly what it
 would see if it had been sent alone. All branches are computed at once in one
-call to the backbone (`opensysone/layout.py`).
+call to the backbone (`maatlm/layout.py`).
 
 This gives, structurally and for any weights (see `tests/test_invariants.py`):
 
@@ -69,7 +70,7 @@ log loss (or Brier) against *probabilistic* targets. For a one-step decision,
 distribution, so the expected reward under a proper scoring rule is a
 differentiable function of the logits. Targets can be one-hot labels,
 annotator-vote frequencies (SNLI ships these), outcome rates, or a frontier-LLM
-ensemble's probabilities (`opensysone/distill.py` — the same reference TypeSafe
+ensemble's probabilities (`maatlm/distill.py` — the same reference TypeSafe
 uses in their workflow evals).
 
 **Ordinal and consistency terms.** `score` questions additionally get a ranked
@@ -100,7 +101,7 @@ flipped, answer flips), paraphrases (same world, different surface), and traps
 ## Layout
 
 ```
-opensysone/
+maatlm/
   schema.py        request/response models, limits (255 options, 2–10 levels)
   layout.py        tree tokenisation, 4-D attention mask, restarted position ids
   model.py         SystemOneModel: backbone + yes/no decision head + temperatures, predict(), save/load
@@ -142,11 +143,11 @@ One request per line; targets per question id:
 
 1. Rent a box with a PyTorch CUDA image. For a first run a 24 GB card (3090/4090)
    is enough for `Qwen3-1.7B-Base` with LoRA; see the sizing table in `scripts/train.sh`.
-2. Copy this repo over (`scp -r opensysone root@host:` or push it to git and clone).
+2. Copy this repo over (`scp -r maatlm root@host:` or push it to git and clone).
 3. ```bash
    bash scripts/setup_gpu.sh        # installs, runs tests, downloads + converts public data
    bash scripts/train.sh            # train -> calibrate -> evaluate   (1.7B LoRA: ~1–2 h on a 4090)
-   OPENSYSONE_MODEL=runs/qwen3-1.7b-base-sysone/final uvicorn opensysone.server:app --host 0.0.0.0 --port 8000
+   MAATLM_MODEL=runs/qwen3-1.7b-base-sysone/final uvicorn maatlm.server:app --host 0.0.0.0 --port 8000
    python scripts/bench.py --model runs/qwen3-1.7b-base-sysone/final
    ```
 4. Optional, and where most of the quality comes from: label real states with a
@@ -156,15 +157,15 @@ One request per line; targets per question id:
    re-running resumes.
    ```bash
    export OPENAI_API_KEY=$OPENROUTER_API_KEY OPENAI_BASE_URL=https://openrouter.ai/api/v1
-   python -m opensysone.datasets.unlabeled --out data/real --n 1500 --eval 300   # real tickets, 10 questions each
+   python -m maatlm.datasets.unlabeled --out data/real --n 1500 --eval 300   # real tickets, 10 questions each
    # (a) the reference eval: both frontier teachers, 2 samples each — TypeSafe's own eval recipe
-   python -m opensysone.distill --in data/real/eval.jsonl --out data/real/eval.labeled.jsonl \
+   python -m maatlm.distill --in data/real/eval.jsonl --out data/real/eval.labeled.jsonl \
        --teacher openai:anthropic/claude-fable-5.1 --teacher openai:openai/gpt-6-astra --samples 2
    # (b) training labels: one frontier teacher, one sample, as many states as the budget allows
-   python -m opensysone.distill --in data/real/train.jsonl --out data/real/train.labeled.jsonl \
+   python -m maatlm.distill --in data/real/train.jsonl --out data/real/train.labeled.jsonl \
        --teacher openai:anthropic/claude-fable-5.1 --max-items 1000
    # (c) cheap surface rewrites of generator rows (labels untouched)
-   python -m opensysone.datasets.rewrite --in data/gen/train.jsonl --out data/gen/train.rewritten.jsonl \
+   python -m maatlm.datasets.rewrite --in data/gen/train.jsonl --out data/gen/train.rewritten.jsonl \
        --model anthropic/claude-haiku-4.5 --max-items 4000
    ```
    Spend order when credits are scarce: (a) first — it is small, fixed, and is the
@@ -175,8 +176,8 @@ One request per line; targets per question id:
    labels all of them.
 
 Everything except the GPU steps runs offline: `python -m pytest tests` and the
-synthetic smoke run (`python -m opensysone.datasets.generator --out data/gen --n 3000`,
-then `python -m opensysone.train --tiny ...`) work on a laptop CPU.
+synthetic smoke run (`python -m maatlm.datasets.generator --out data/gen --n 3000`,
+then `python -m maatlm.train --tiny ...`) work on a laptop CPU.
 
 The recommended data mix for a real run is the generator (tens of thousands of
 rows, `--n 20000` or more), the public converters (`convert_hf.py`, for

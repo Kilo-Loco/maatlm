@@ -6,7 +6,7 @@ double charge AND a wrong size is routed to billing 40% of the time), the ideal
 model must output soft probabilities, and its ECE against the generator's true
 probabilities is measurable.
 
-    python -m opensysone.datasets.synthetic --out data/synth --n 4000
+    python -m maatlm.datasets.synthetic --out data/synth --n 4000
 """
 
 from __future__ import annotations

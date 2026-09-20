@@ -1,6 +1,6 @@
 """HTTP API compatible with the TypeSafe request/response shape.
 
-    OPENSYSONE_MODEL=runs/x/final uvicorn opensysone.server:app --host 0.0.0.0 --port 8000
+    MAATLM_MODEL=runs/x/final uvicorn maatlm.server:app --host 0.0.0.0 --port 8000
 
     POST /v1/systemone
     {"state": "...", "questions": {"id": {"type": "choice", "instructions": "...", "criteria": {...}}}}
@@ -21,21 +21,21 @@ from fastapi import FastAPI, HTTPException
 from .model import SystemOneModel
 from .schema import SystemOneRequest, SystemOneResponse
 
-app = FastAPI(title="opensysone", version="0.1.0")
+app = FastAPI(title="maatlm", version="0.1.0")
 _model: SystemOneModel | None = None
 _queue: "asyncio.Queue[Tuple[SystemOneRequest, asyncio.Future]]" = None  # type: ignore
-BATCH_WINDOW_S = float(os.environ.get("OPENSYSONE_BATCH_WINDOW", "0.005"))
-MAX_BATCH = int(os.environ.get("OPENSYSONE_MAX_BATCH", "32"))
+BATCH_WINDOW_S = float(os.environ.get("MAATLM_BATCH_WINDOW", "0.005"))
+MAX_BATCH = int(os.environ.get("MAATLM_MAX_BATCH", "32"))
 
 
 def _load() -> SystemOneModel:
-    path = os.environ.get("OPENSYSONE_MODEL")
+    path = os.environ.get("MAATLM_MODEL")
     if not path:
-        raise RuntimeError("set OPENSYSONE_MODEL to a checkpoint directory (or 'tiny' for the offline test model)")
+        raise RuntimeError("set MAATLM_MODEL to a checkpoint directory (or 'tiny' for the offline test model)")
     if path == "tiny":
         from .tiny import tiny_model
         return tiny_model()
-    device = os.environ.get("OPENSYSONE_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = os.environ.get("MAATLM_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.bfloat16 if device.startswith("cuda") else None
     return SystemOneModel.from_pretrained(path, torch_dtype=dtype, device=device)
 
@@ -58,7 +58,7 @@ async def _worker():
             pairs = [(r.state, {k: v for k, v in r.questions.items()}) for r, _ in items]
             outs = await loop.run_in_executor(None, lambda: _model.predict_batch(pairs))
             for (r, f), o in zip(items, outs):
-                o.model = r.model if r.model != "opensysone-latest" else _model.model_name
+                o.model = r.model if r.model != "maatlm-latest" else _model.model_name
                 if not f.done():
                     f.set_result(o)
         except Exception as e:  # noqa: BLE001

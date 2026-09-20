@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "opensysone"
+name = "maatlm"
 version = "0.1.0"
 description = "Open-source System One style decision model: typed questions in, calibrated probabilities out, one parallel forward pass."
 readme = "README.md"
@@ -26,4 +26,4 @@ distill = ["openai", "anthropic"]
 dev = ["pytest", "httpx"]
 
 [tool.setuptools.packages.find]
-include = ["opensysone*"]
+include = ["maatlm*"]

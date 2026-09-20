@@ -9,7 +9,7 @@ import math
 import pytest
 import torch
 
-from opensysone.tiny import tiny_model
+from maatlm.tiny import tiny_model
 
 STATE = "Shoes arrived two weeks late and in the wrong size. Also I see two charges on my card."
 Q_DEPT = {
@@ -86,7 +86,7 @@ def test_type_safety(model):
 
 def test_schema_limits():
     from pydantic import ValidationError
-    from opensysone.schema import ChoiceQuestion, ScoreQuestion
+    from maatlm.schema import ChoiceQuestion, ScoreQuestion
 
     with pytest.raises(ValidationError):
         ChoiceQuestion(instructions="x", criteria={f"o{i}": None for i in range(256)})
