@@ -39,6 +39,38 @@ from .schema import (
 SYSONE_CONFIG = "maatlm_config.json"
 TYPES = ("choice", "score", "noul")
 
+# Layer kinds that cannot honour an arbitrary attention mask. The tree mask is the
+# mechanism behind invariants 1, 2 and 6 (isolation, option equivariance, sibling
+# independence); on these layers it is silently ignored and the guarantees are void.
+# Measured 2026-09-21: Qwen3.5-4B-Base (24 linear + 8 full) drifts 0.19 on isolation
+# and 0.20 on option permutation. Sliding-window attention DOES honour the mask.
+INCOMPATIBLE_LAYER_KINDS = ("linear_attention", "mamba", "recurrent", "gated_delta", "ssm")
+
+
+def check_backbone_attention(config, strict: bool = True) -> Dict[str, Any]:
+    """Refuse backbones whose layers ignore the tree mask.
+
+    Returns a summary; raises RuntimeError when strict and an incompatible layer is found."""
+    cfg = getattr(config, "text_config", config)
+    types = getattr(cfg, "layer_types", None) or []
+    counts: Dict[str, int] = {}
+    for t in types:
+        counts[t] = counts.get(t, 0) + 1
+    bad = {t: n for t, n in counts.items() if any(k in t.lower() for k in INCOMPATIBLE_LAYER_KINDS)}
+    info = {"layer_types": counts, "incompatible": bad,
+            "sliding_window": getattr(cfg, "sliding_window", None)}
+    if bad:
+        msg = (
+            f"backbone has mask-ignoring layers {bad} out of {counts}. The tree mask cannot "
+            "control them, so question isolation and option equivariance DO NOT HOLD. Pick a "
+            "full-attention (or sliding-window) backbone, or switch to per-branch forward passes. "
+            "Set MAATLM_ALLOW_UNSAFE_BACKBONE=1 to proceed anyway (invariants void)."
+        )
+        if strict and os.environ.get("MAATLM_ALLOW_UNSAFE_BACKBONE") != "1":
+            raise RuntimeError(msg)
+        print(f"[maatlm] WARNING: {msg}")
+    return info
+
 
 class SystemOneModel(nn.Module):
     def __init__(
@@ -265,6 +297,9 @@ class SystemOneModel(nn.Module):
         device: Optional[str] = None,
         **kwargs,
     ) -> "SystemOneModel":
+        from transformers import AutoConfig
+
+        check_backbone_attention(AutoConfig.from_pretrained(path))
         try:
             backbone = AutoModelForCausalLM.from_pretrained(
                 path, dtype=torch_dtype, attn_implementation=attn_implementation

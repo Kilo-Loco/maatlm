@@ -218,3 +218,44 @@ def test_unlabeled_pack_is_schema_valid():
 
     SystemOneRequest(state={"subject": "s", "message": "m"}, questions=PACK)
     assert len(PACK) >= 10 and {q["type"] for q in PACK.values()} == {"choice", "score", "noul"}
+
+
+# ------------------------------------------------------------------ backbone safety
+
+
+class _Cfg:
+    def __init__(self, layer_types, sliding_window=None):
+        self.layer_types = layer_types
+        self.sliding_window = sliding_window
+
+
+def test_full_attention_backbone_is_accepted():
+    from maatlm.model import check_backbone_attention
+
+    info = check_backbone_attention(_Cfg(["full_attention"] * 36))
+    assert info["incompatible"] == {} and info["layer_types"] == {"full_attention": 36}
+
+
+def test_sliding_window_backbone_is_accepted():
+    """Gemma 4: sliding attention still honours an explicit mask (measured drift 0.0000)."""
+    from maatlm.model import check_backbone_attention
+
+    info = check_backbone_attention(_Cfg(["sliding_attention"] * 28 + ["full_attention"] * 7, 512))
+    assert info["incompatible"] == {} and info["sliding_window"] == 512
+
+
+def test_linear_attention_backbone_is_refused():
+    """Qwen3.5: linear-attention layers ignore the tree mask, so the invariants are void."""
+    from maatlm.model import check_backbone_attention
+
+    cfg = _Cfg(["linear_attention"] * 24 + ["full_attention"] * 8)
+    with pytest.raises(RuntimeError, match="isolation and option equivariance"):
+        check_backbone_attention(cfg)
+    info = check_backbone_attention(cfg, strict=False)  # non-strict warns instead
+    assert info["incompatible"] == {"linear_attention": 24}
+
+
+def test_unknown_layer_types_do_not_block():
+    from maatlm.model import check_backbone_attention
+
+    assert check_backbone_attention(_Cfg([]))["incompatible"] == {}

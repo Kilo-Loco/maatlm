@@ -41,6 +41,13 @@ These are the whole point of the project and are enforced by `tests/test_invaria
 4. **Type safety**: outputs are only a softmax over declared options / levels or a single sigmoid. No strings.
 5. **Question ids are never shown to the model** (only instructions + criteria are tokenised).
 6. **Levels/options are judged independently** — an option's tokens never attend to sibling options.
+7. **The backbone must honour an arbitrary attention mask.** Invariants 1, 2 and 6 are enforced by
+   the 4-D tree mask, which layers with linear/recurrent/SSM attention silently ignore.
+   `model.check_backbone_attention` refuses those at load. Measured 2026-09-21: Qwen3.5-4B-Base
+   (24 linear + 8 full) drifts 0.193 on isolation and 0.205 on option permutation — **Qwen3.5 is
+   disqualified at every size**. Full attention (Qwen3) and sliding-window attention (Gemma 4)
+   both pass with drift 0.0000. Escape hatch for hybrid backbones: per-branch forward passes
+   against a cached state prefix (no mask needed) — which is also what on-device needs.
 
 Anything touching `layout.py` (mask, position ids, templates) or `model.py::forward`
 must keep all tests green. Run them before and after.
@@ -72,6 +79,10 @@ primitive on a held-out split. `server.py` exposes the TypeSafe-compatible
 - `max_state_tokens` defaults to 32768, matching Jev's state limit; the dense mask is O(L²) so batch smaller at that length.
 - Never calibrate or report metrics on the training split.
 - `tiny.py` (random backbone, offline tokenizer) is for tests only; real runs start from a pretrained `--base`.
+- Base backbones beat instruct ones for the raw-text yes/no readout: instruct models want to emit
+  " Answer" rather than " Yes". Zero-shot on 231 JevBench public items (easy/std/hard):
+  Qwen3-4B-Base 0.938/0.528/0.469 · Qwen3.5-4B-Base 0.708/0.472/0.396 · gemma-4-E2B-it 0.333/0.222/0.351.
+  Zero-shot screening therefore cannot rank instruct backbones fairly — they need training first.
 - Dataset ids in `datasets/convert_hf.py` are best-effort; if one 404s, fix the id, don't delete the converter.
 - Paid-API scripts (`distill.py`, `datasets/rewrite.py`) must stay credit-safe: dry-run estimate, `--max-items`,
   append-as-you-go output, resume on rerun. `data/real/eval.jsonl` is the fixed reference eval — never train on it,
@@ -80,12 +91,13 @@ primitive on a held-out split. `server.py` exposes the TypeSafe-compatible
 
 ## Known gaps / good next tasks (roughly in priority order)
 
-1. **Validate on real weights.** The pretrained path (`from_pretrained` + 4-D mask through a real Qwen3)
-   has only been exercised structurally — HF was unreachable where this was built. First GPU
-   task: `bash scripts/train.sh` with `BASE=Qwen/Qwen3-0.6B-Base LORA=0 EPOCHS=0.2` and confirm
-   loss falls and `evaluate` ECE is sane. Fix anything that breaks in `model.py::hidden_states`.
-2. **Zero-shot baseline**: run `evaluate.py` on the untrained base model to record the step-0
-   numbers (the yes/no head should already beat chance).
+1. **Verify the calibration fix.** `setup_gpu.sh` used to fit temperatures on generator-only data,
+   which the model had memorised, so hard-tier ECE went 0.132 (untrained) -> 0.289 (trained). The
+   split is now public+generator and `calibrate.py --ood-data` reports whether a fit generalises,
+   but this has NOT yet been re-measured on a trained checkpoint.
+2. **Train Gemma 4 E2B** (~2.3B effective, Apache-2.0, MLX-supported, invariants verified) — the
+   on-device candidate. Its zero-shot score is meaningless (instruct format), so only a trained
+   run can rank it; system-one-open reaches 0.732 with this backbone.
 3. **Memory for 255-option questions**: the dense `[B,1,L,L]` mask is O(L²). Options: chunk
    options across multiple forwards sharing a KV cache of the state, or a block-sparse mask via
    `torch.nn.attention.flex_attention` (mask_mod from `seg_id` + ancestor matrix).
