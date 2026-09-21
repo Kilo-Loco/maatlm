@@ -308,3 +308,22 @@ def test_lora_targets_skips_unused_towers():
     assert len(lora_targets(Backbone())) == 3          # unscoped: every tower
     scoped = lora_targets(Backbone(), prefix="language_model")
     assert scoped == ["language_model.q_proj"]
+
+
+def test_drop_unused_towers_frees_multimodal_encoders():
+    from maatlm.train import drop_unused_towers
+
+    m = tiny_model()
+    m.backbone.vision_tower = torch.nn.Linear(4, 4)
+    m.backbone.audio_tower = torch.nn.Linear(4, 4)
+    dropped = drop_unused_towers(m)
+    assert set(dropped) >= {"vision_tower", "audio_tower"}
+    assert m.backbone.vision_tower is None and m.backbone.audio_tower is None
+    # the text path still works
+    assert 0.0 <= m.predict("x", {"n": {"type": "noul", "instructions": "y"}}).answers["n"].noul <= 1.0
+
+
+def test_drop_unused_towers_is_a_noop_without_them():
+    from maatlm.train import drop_unused_towers
+
+    assert drop_unused_towers(tiny_model()) == []

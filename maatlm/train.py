@@ -18,6 +18,7 @@ Options:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import os
@@ -66,6 +67,33 @@ def lora_targets(backbone, wanted=PROJECTIONS, prefix: Optional[str] = None) -> 
             + (f" under {prefix!r}" if prefix else "")
         )
     return sorted(names)
+
+
+TOWER_ATTRS = ("vision_tower", "audio_tower", "vision_model", "audio_model", "multi_modal_projector")
+
+
+def drop_unused_towers(m: SystemOneModel) -> list:
+    """Free the vision/audio encoders a text-only decision model never runs.
+
+    gemma-4-E2B ships both; they are never reached from the yes/no head but still occupy
+    VRAM and would otherwise be moved to the device. Call before .to(device)."""
+    bb = m.backbone
+    inner = bb.get_base_model() if hasattr(bb, "get_base_model") else bb
+    holders = [inner, getattr(inner, getattr(inner, "base_model_prefix", ""), None)]
+    dropped = []
+    for holder in holders:
+        if holder is None:
+            continue
+        for attr in TOWER_ATTRS:
+            if getattr(holder, attr, None) is not None:
+                setattr(holder, attr, None)
+                dropped.append(attr)
+    if dropped:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print(f"[maatlm] dropped unused towers: {sorted(set(dropped))}")
+    return dropped
 
 
 def maybe_lora(m: SystemOneModel, r: int, alpha: Optional[int] = None):
@@ -130,6 +158,8 @@ def main(argv=None):
                     help="training-only truncation for memory; NOT persisted to the checkpoint")
     ap.add_argument("--serve-max-state-tokens", type=int, default=32768,
                     help="state budget written into the saved checkpoint (serving limit)")
+    ap.add_argument("--keep-towers", action="store_true",
+                    help="keep multimodal vision/audio encoders in memory (they are never used)")
     ap.add_argument("--eval-every", type=int, default=200)
     ap.add_argument("--save-every", type=int, default=0)
     ap.add_argument("--workers", type=int, default=2)
@@ -141,6 +171,8 @@ def main(argv=None):
     torch.manual_seed(args.seed)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     m = load_model(args)
+    if not args.keep_towers:
+        drop_unused_towers(m)
     if args.lora:
         m = maybe_lora(m, args.lora)
     if args.grad_checkpoint:
