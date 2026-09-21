@@ -47,25 +47,34 @@ def load_model(args) -> SystemOneModel:
 PROJECTIONS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
 
 
-def lora_targets(backbone, wanted=PROJECTIONS) -> list:
+def lora_targets(backbone, wanted=PROJECTIONS, prefix: Optional[str] = None) -> list:
     """Actual nn.Linear modules to adapt, found by type rather than by name.
 
-    Some backbones wrap their projections: Gemma 4 uses Gemma4ClippableLinear, whose real
-    nn.Linear sits at `<proj>.linear`, and peft refuses to wrap the outer class. Walking for
-    nn.Linear under a wanted name handles both wrapped and plain layouts, and skips the
-    per-layer-embedding projections that are not attention/MLP weights."""
+    Two traps this avoids:
+      * Wrapped projections. Gemma 4 uses Gemma4ClippableLinear, whose real nn.Linear sits at
+        `<proj>.linear`; peft refuses to wrap the outer class. Walking for nn.Linear handles
+        wrapped and plain layouts alike, and skips per-layer-embedding projections.
+      * Unused towers. Multimodal checkpoints carry vision/audio encoders we never run — on
+        gemma-4-E2B they are 161 of 366 matches, so 44% of the adapter would train weights that
+        never see a gradient path from the decision head. `prefix` restricts to the text decoder."""
     names = [n for n, mod in backbone.named_modules()
-             if isinstance(mod, nn.Linear) and any(w in n for w in wanted)]
+             if isinstance(mod, nn.Linear) and any(w in n for w in wanted)
+             and (prefix is None or n.startswith(prefix))]
     if not names:
-        raise RuntimeError(f"found no LoRA targets matching {wanted} in {type(backbone).__name__}")
+        raise RuntimeError(
+            f"found no LoRA targets matching {wanted} in {type(backbone).__name__}"
+            + (f" under {prefix!r}" if prefix else "")
+        )
     return sorted(names)
 
 
 def maybe_lora(m: SystemOneModel, r: int, alpha: Optional[int] = None):
     from peft import LoraConfig, get_peft_model
 
-    targets = lora_targets(m.backbone)
-    print(f"[maatlm] {len(targets)} LoRA target modules, e.g. {targets[:2]}")
+    dec = m._inner()
+    prefix = next((n for n, mod in m.backbone.named_modules() if mod is dec), None)
+    targets = lora_targets(m.backbone, prefix=prefix)
+    print(f"[maatlm] {len(targets)} LoRA target modules under {prefix!r}, e.g. {targets[:2]}")
     cfg = LoraConfig(
         r=r,
         lora_alpha=alpha or 2 * r,

@@ -287,3 +287,24 @@ def test_lora_targets_raises_when_nothing_matches():
 
     with pytest.raises(RuntimeError, match="no LoRA targets"):
         lora_targets(torch.nn.Sequential(torch.nn.Linear(4, 4)))
+
+
+def test_lora_targets_skips_unused_towers():
+    """Multimodal checkpoints carry vision/audio encoders the decision head never reaches."""
+    from maatlm.train import lora_targets
+
+    class Tower(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.q_proj = torch.nn.Linear(8, 8)
+
+    class Backbone(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.language_model = Tower()
+            self.vision_tower = Tower()
+            self.audio_tower = Tower()
+
+    assert len(lora_targets(Backbone())) == 3          # unscoped: every tower
+    scoped = lora_targets(Backbone(), prefix="language_model")
+    assert scoped == ["language_model.q_proj"]
