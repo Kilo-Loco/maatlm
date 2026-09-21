@@ -37,21 +37,39 @@ def ranked_probability_score(p: torch.Tensor, target: torch.Tensor) -> torch.Ten
     return ((p.cumsum(-1) - target.cumsum(-1)) ** 2)[:-1].sum()
 
 
+def negative_entropy(logits: torch.Tensor, qtype: str) -> torch.Tensor:
+    """-H(p). Adding beta * this to the loss is the confidence penalty of Pereyra et al.
+
+    WARNING: this makes the objective IMPROPER — the optimum is no longer the true
+    distribution, it is biased toward uncertainty. Use only to trade in-distribution
+    sharpness for out-of-distribution humility, and always measure both."""
+    if qtype == "noul":
+        p = torch.sigmoid(logits).clamp(1e-6, 1 - 1e-6)
+        return (p * p.log() + (1 - p) * (1 - p).log()).sum()
+    logp = F.log_softmax(logits, dim=-1)
+    return (logp.exp() * logp).sum()
+
+
 def decision_loss(
-    logits: torch.Tensor, target: torch.Tensor, qtype: str, rule: str = "log", rps_weight: float = 0.0
+    logits: torch.Tensor, target: torch.Tensor, qtype: str, rule: str = "log", rps_weight: float = 0.0,
+    entropy_weight: float = 0.0,
 ) -> torch.Tensor:
     """logits: [n] (choice/score) or [] (noul). target: matching shape of probabilities."""
     if qtype == "noul":
         p = torch.sigmoid(logits)
-        if rule == "log":
-            return F.binary_cross_entropy_with_logits(logits, target)
-        return (p - target) ** 2 + ((1 - p) - (1 - target)) ** 2
+        loss = (F.binary_cross_entropy_with_logits(logits, target) if rule == "log"
+                else (p - target) ** 2 + ((1 - p) - (1 - target)) ** 2)
+        if entropy_weight > 0:
+            loss = loss + entropy_weight * negative_entropy(logits, qtype)
+        return loss
     if rule == "log":
         loss = -(target * F.log_softmax(logits, dim=-1)).sum()
     else:
         loss = ((F.softmax(logits, dim=-1) - target) ** 2).sum()
     if qtype == "score" and rps_weight > 0:
         loss = loss + rps_weight * ranked_probability_score(F.softmax(logits, dim=-1), target)
+    if entropy_weight > 0:
+        loss = loss + entropy_weight * negative_entropy(logits, qtype)
     return loss
 
 
@@ -74,6 +92,7 @@ def batch_loss(
     rule: str = "log",
     type_weights: Optional[Dict[str, float]] = None,
     rps_weight: float = 0.0,
+    entropy_weight: float = 0.0,
     pairs: Optional[Sequence[Tuple[int, int]]] = None,
     consistency_weight: float = 0.0,
 ):
@@ -86,7 +105,7 @@ def batch_loss(
     for per_q, per_t, lay in zip(raw, targets, layouts):
         for logits, t, qh in zip(per_q, per_t, lay.heads):
             qt = qh.qtype
-            l = decision_loss(logits, t.to(logits.device), qt, rule, rps_weight)
+            l = decision_loss(logits, t.to(logits.device), qt, rule, rps_weight, entropy_weight)
             w = 1.0 if type_weights is None else type_weights.get(qt, 1.0)
             total = total + w * l
             n += 1

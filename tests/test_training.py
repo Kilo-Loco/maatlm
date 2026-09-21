@@ -327,3 +327,46 @@ def test_drop_unused_towers_is_a_noop_without_them():
     from maatlm.train import drop_unused_towers
 
     assert drop_unused_towers(tiny_model()) == []
+
+
+# ---------------------------------------------------- honest uncertainty out of distribution
+
+
+def test_smoothing_only_touches_hard_labels():
+    """A one-hot dataset label is one annotator's opinion; a teacher/generator distribution is truth."""
+    from maatlm.data import target_tensor
+
+    q = {"type": "choice", "criteria": {"a": None, "b": None, "c": None}}
+    hard = target_tensor(q, {"label": 0}, smoothing=0.3)
+    assert hard[0].item() < 1.0 and hard[1].item() > 0.0        # softened
+    soft = target_tensor(q, {"probabilities": [0.6, 0.3, 0.1]}, smoothing=0.3)
+    assert torch.allclose(soft, torch.tensor([0.6, 0.3, 0.1]))  # untouched
+
+
+def test_smoothing_on_noul_only_for_certain_targets():
+    from maatlm.data import target_tensor
+
+    q = {"type": "noul"}
+    assert target_tensor(q, {"p": 1.0}, smoothing=0.2).item() < 1.0     # hard -> softened
+    assert math.isclose(target_tensor(q, {"p": 0.8}, smoothing=0.2).item(), 0.8, rel_tol=1e-6)  # soft -> kept
+
+
+def test_entropy_penalty_pushes_toward_uncertainty():
+    from maatlm.losses import negative_entropy
+
+    sharp = torch.tensor([6.0, 0.0, 0.0])
+    flat = torch.tensor([0.1, 0.0, 0.0])
+    assert negative_entropy(sharp, "choice") > negative_entropy(flat, "choice")
+
+
+def test_entropy_penalty_makes_the_objective_improper():
+    """Documented trade: with a confidence penalty the optimum is no longer the true target."""
+    target = torch.tensor([0.9, 0.1])
+    logits = torch.zeros(2, requires_grad=True)
+    opt = torch.optim.Adam([logits], lr=0.1)
+    for _ in range(400):
+        opt.zero_grad()
+        decision_loss(logits, target, "choice", "log", entropy_weight=0.3).backward()
+        opt.step()
+    p = torch.softmax(logits.detach(), -1)
+    assert p[0].item() < 0.9 - 0.02, p   # biased toward uncertainty, as designed

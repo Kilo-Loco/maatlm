@@ -116,14 +116,16 @@ def maybe_lora(m: SystemOneModel, r: int, alpha: Optional[int] = None):
 
 
 @torch.no_grad()
-def evaluate(m: SystemOneModel, loader, device, rule: str, rps: float = 0.0, consistency: float = 0.0):
+def evaluate(m: SystemOneModel, loader, device, rule: str, rps: float = 0.0, consistency: float = 0.0,
+             entropy: float = 0.0):
     m.eval()
     tot, n, per = 0.0, 0, {"choice": [], "score": [], "noul": [], "consistency": []}
     for batch, targets in loader:
         pairs = getattr(batch, "pairs", None)
         batch = batch.to(device)
         raw = m(batch)
-        loss, pt = batch_loss(raw, targets, batch.layouts, rule, rps_weight=rps, pairs=pairs, consistency_weight=consistency)
+        loss, pt = batch_loss(raw, targets, batch.layouts, rule, rps_weight=rps, entropy_weight=entropy,
+                              pairs=pairs, consistency_weight=consistency)
         tot += loss.item()
         n += 1
         for k, v in pt.items():
@@ -148,6 +150,9 @@ def main(argv=None):
     ap.add_argument("--rule", choices=["log", "brier"], default="log")
     ap.add_argument("--smoothing", type=float, default=0.0)
     ap.add_argument("--rps", type=float, default=0.5, help="weight of the ranked probability score term for score questions")
+    ap.add_argument("--entropy", type=float, default=0.0,
+                    help="confidence penalty: trades in-distribution sharpness for out-of-distribution "
+                         "humility. IMPROPER — the optimum is no longer the true distribution. Measure both.")
     ap.add_argument("--consistency", type=float, default=0.1, help="weight of the paraphrase-consistency (JS) term; 0 disables")
     ap.add_argument("--shuffle-options", action="store_true")
     ap.add_argument("--lora", type=int, default=0)
@@ -220,7 +225,8 @@ def main(argv=None):
             batch = batch.to(device)
             raw = m(batch)
             loss, per_type = batch_loss(
-                raw, targets, batch.layouts, args.rule, rps_weight=args.rps, pairs=pairs, consistency_weight=args.consistency
+                raw, targets, batch.layouts, args.rule, rps_weight=args.rps, entropy_weight=args.entropy,
+                pairs=pairs, consistency_weight=args.consistency
             )
             (loss / args.grad_accum).backward()
             micro += 1
@@ -232,13 +238,15 @@ def main(argv=None):
             opt.zero_grad(set_to_none=True)
             step += 1
             rec = {"step": step, "loss": loss.item(), "lr": sched.get_last_lr()[0], "per_type": per_type, "t": time.time() - t0}
-            if step % 10 == 0 or step == 1:
+            if step % 10 == 0 or step == 1 or step <= 3:
                 print(json.dumps(rec), flush=True)
             log.write(json.dumps(rec) + "\n")
+            log.flush()  # unbuffered: a long run must be observable while it runs
             if val_dl is not None and (step % args.eval_every == 0 or step == total_steps):
-                vl, vpt = evaluate(m, val_dl, device, args.rule, args.rps, args.consistency)
+                vl, vpt = evaluate(m, val_dl, device, args.rule, args.rps, args.consistency, args.entropy)
                 print(json.dumps({"step": step, "val_loss": vl, "val_per_type": vpt}), flush=True)
                 log.write(json.dumps({"step": step, "val_loss": vl, "val_per_type": vpt}) + "\n")
+                log.flush()
                 if vl < best:
                     best = vl
                     _save(m, os.path.join(args.out, "best"), args)

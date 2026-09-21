@@ -62,19 +62,28 @@ def write_jsonl(path: str, examples: Sequence[Example]) -> None:
 
 
 def target_tensor(q: Dict[str, Any], t: Dict[str, Any], smoothing: float = 0.0) -> torch.Tensor:
-    """Return the training target for one question: [n] probs for choice/score, [] for noul."""
+    """Return the training target for one question: [n] probs for choice/score, [] for noul.
+
+    `smoothing` is applied ONLY to hard labels, never to genuine soft targets. A one-hot
+    label from a public dataset is one annotator's opinion, not P=1.0, so softening it is a
+    better estimate of truth and keeps the objective proper. A teacher ensemble's 0.6/0.4 or
+    the generator's exact 0.8 already IS the truth — smoothing those would corrupt the signal
+    the whole calibration story rests on."""
     qtype = q["type"]
     if qtype == "noul":
-        return torch.tensor(float(t["p"]))
+        p = float(t["p"])
+        hard = p in (0.0, 1.0)
+        if smoothing > 0 and hard:
+            p = (1 - smoothing) * p + smoothing / 2
+        return torch.tensor(p)
     n = len(q["criteria"])
     if "probabilities" in t:
         p = torch.tensor([float(x) for x in t["probabilities"]])
         assert p.numel() == n, f"target has {p.numel()} entries, question has {n}"
         p = p.clamp_min(0)
-        p = p / p.sum()
-    else:
-        p = torch.zeros(n)
-        p[int(t["label"])] = 1.0
+        return p / p.sum()          # genuine soft target: leave it alone
+    p = torch.zeros(n)
+    p[int(t["label"])] = 1.0
     if smoothing > 0:
         p = (1 - smoothing) * p + smoothing / n
     return p
