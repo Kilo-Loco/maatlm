@@ -92,9 +92,14 @@ def main(argv=None):
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--bf16", action="store_true")
     ap.add_argument("--device", default=None)
+    ap.add_argument("--max-state-tokens", type=int, default=None,
+                    help="override the checkpoint's state budget; pin it so models compare symmetrically")
     args = ap.parse_args(argv)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     m = SystemOneModel.from_pretrained(args.model, torch_dtype=torch.bfloat16 if args.bf16 else None, device=device)
+    if args.max_state_tokens is not None:
+        m.max_state_tokens = args.max_state_tokens
+    print(json.dumps({"state_budget": m.max_state_tokens}))
     examples = read_jsonl(args.data)
     recs = collect(m, examples, batch_size=args.batch, device=device)
     temps = m.temperatures()

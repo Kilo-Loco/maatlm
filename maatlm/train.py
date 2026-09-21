@@ -7,6 +7,8 @@
 Options:
   --lora R          train a LoRA adapter of rank R instead of all weights (peft)
   --rule log|brier  proper scoring rule
+  --max-state-tokens N   TRAINING-ONLY truncation (memory); never saved into the checkpoint
+  --serve-max-state-tokens N  what the saved checkpoint reports as its state budget (default 32768)
   --rps W           add W * ranked-probability-score for `score` questions (ordinal-aware)
   --consistency W   add W * JS(state, paraphrase) for examples that carry `paraphrases`
   --shuffle-options randomise option order per sample (see data.py)
@@ -95,7 +97,10 @@ def main(argv=None):
     ap.add_argument("--bf16", action="store_true")
     ap.add_argument("--grad-checkpoint", action="store_true")
     ap.add_argument("--attn", default="sdpa")
-    ap.add_argument("--max-state-tokens", type=int, default=4096)
+    ap.add_argument("--max-state-tokens", type=int, default=32768,
+                    help="training-only truncation for memory; NOT persisted to the checkpoint")
+    ap.add_argument("--serve-max-state-tokens", type=int, default=32768,
+                    help="state budget written into the saved checkpoint (serving limit)")
     ap.add_argument("--eval-every", type=int, default=200)
     ap.add_argument("--save-every", type=int, default=0)
     ap.add_argument("--workers", type=int, default=2)
@@ -187,6 +192,10 @@ def main(argv=None):
 
 
 def _save(m: SystemOneModel, path: str, args, final: bool = False):
+    # The training truncation is a memory decision, not a capability one. Persisting it
+    # would silently cut long states at eval/serve time (it did, once: 33% of JevBench's
+    # hard tier is over 1024 tokens). Always save the serving budget instead.
+    m.max_state_tokens = args.serve_max_state_tokens
     if args.lora and not final:
         # mid-run: save the adapter only (merging would end training)
         os.makedirs(path, exist_ok=True)

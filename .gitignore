@@ -7,3 +7,4 @@ runs/
 # paid teacher labels are small and cost money: keep them in git
 !data/real/
 !data/real/*.jsonl
+data/jevbench/per-task.json

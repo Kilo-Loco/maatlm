@@ -6,7 +6,15 @@ JevBench rows are one decision each:
     {"id", "family", "state", "question": {type, instructions, criteria}, "labels": [...],
      "expected": <gold>, "provenance": {...}}
 
-Reports argmax accuracy, Brier and ECE per split and per family, plus latency.
+Reports argmax accuracy, Brier and ECE per split and per family, plus latency and
+input tokens per decision (so $/1,000 decisions can be estimated at any tariff).
+
+IMPORTANT: pass --max-state-tokens so every model under comparison gets the same state
+budget. 33% of the hard tier is over 1024 tokens, so a checkpoint carrying a small
+budget silently truncates those states and scores far below its real ability.
+
+Use --serial for JevBench-comparable latency (they measure one decision at a time).
+
 Datasets: https://github.com/fstandhartinger/jevbench (MIT).
 """
 
@@ -15,6 +23,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import math
 import os
 import time
 
@@ -73,14 +82,25 @@ def main():
     ap.add_argument("--bf16", action="store_true")
     ap.add_argument("--device", default=None)
     ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--serial", action="store_true", help="batch=1; JevBench measures latency serially")
+    ap.add_argument("--max-state-tokens", type=int, default=None,
+                    help="pin the state budget for a symmetric comparison (recommended: 32768)")
+    ap.add_argument("--price-per-mtok", type=float, default=None,
+                    help="USD per million input tokens, to estimate $ per 1,000 decisions")
     ap.add_argument("--out")
     a = ap.parse_args()
+    if a.serial:
+        a.batch = 1
 
     device = a.device or ("cuda" if torch.cuda.is_available() else "cpu")
     m = SystemOneModel.from_pretrained(a.model, torch_dtype=torch.bfloat16 if a.bf16 else None, device=device)
+    if a.max_state_tokens is not None:
+        m.max_state_tokens = a.max_state_tokens
     m.eval()
 
-    report, latencies = {}, []
+    report, latencies, tokens = {"config": {"model": a.model, "state_budget": m.max_state_tokens,
+                                            "batch": a.batch, "serial": bool(a.serial)}}, [], []
+    print(json.dumps(report["config"]))
     for split in a.splits:
         path = os.path.join(a.data, f"{split}.jsonl")
         if not os.path.exists(path):
@@ -98,6 +118,7 @@ def main():
                 skipped += len(chunk)
                 continue
             latencies.append((time.time() - t0) / len(chunk))
+            tokens.extend(x.usage.input_tokens for x in resp)
             for r, resp_i in zip(chunk, resp):
                 got = record(resp_i.answers["q"], r)
                 if got is None:
@@ -118,12 +139,27 @@ def main():
 
     if latencies:
         lat = sorted(latencies)
+        p50, p95 = lat[len(lat) // 2], lat[min(int(len(lat) * 0.95), len(lat) - 1)]
         report["latency_ms"] = {
             "mean": round(1000 * sum(lat) / len(lat), 1),
-            "p50": round(1000 * lat[len(lat) // 2], 1),
-            "p95": round(1000 * lat[int(len(lat) * 0.95)], 1),
-            "note": f"per decision, batch {a.batch}, {device}",
+            "p50": round(1000 * p50, 1),
+            "p95": round(1000 * p95, 1),
+            "note": f"per decision, batch {a.batch}, {device}" + ("" if a.serial else " (NOT serial; JevBench measures serially)"),
         }
+        # JevBench speed axis: mean of score(p50), score(p95); score(s) = 100 - 20*log10(s/0.1)
+        sc = lambda s_: max(0.0, min(100.0, 100 - 20 * math.log10(max(s_, 1e-6) / 0.1)))
+        report["speed_axis_estimate"] = round((sc(p50) + sc(p95)) / 2, 1)
+    if tokens:
+        mean_tok = sum(tokens) / len(tokens)
+        report["input_tokens"] = {"mean": round(mean_tok, 1), "total": sum(tokens), "n": len(tokens)}
+        if a.price_per_mtok:
+            usd_per_1k = mean_tok * 1000 * a.price_per_mtok / 1e6
+            report["cost"] = {
+                "usd_per_1k_decisions": round(usd_per_1k, 5),
+                "price_per_mtok": a.price_per_mtok,
+                # JevBench cost axis: 100 - 30*log10(usd / 0.001)
+                "cost_axis_estimate": round(max(0.0, min(100.0, 100 - 30 * math.log10(max(usd_per_1k, 1e-9) / 0.001))), 1),
+            }
     print(json.dumps(report, indent=2))
     if a.out:
         with open(a.out, "w") as f:
