@@ -60,6 +60,7 @@ def main(argv=None):
     ap.add_argument("--bf16", action="store_true")
     ap.add_argument("--device", default=None)
     ap.add_argument("--min-count", type=int, default=50, help="records needed to fit a per-option-count temperature")
+    ap.add_argument("--ood-data", help="held-out set NOT used for fitting; reports whether the fit generalises")
     args = ap.parse_args(argv)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     m = SystemOneModel.from_pretrained(args.model, torch_dtype=torch.bfloat16 if args.bf16 else None, device=device)
@@ -81,8 +82,25 @@ def main(argv=None):
     for key, T in temps.items():
         m.set_temperature(key, T)
     m.save(args.out or args.model)
+
+    ood = {}
+    if args.ood_data:
+        ood_recs = collect(m, read_jsonl(args.ood_data), batch_size=args.batch, device=device)
+        b, a2 = summarize(apply_temps(ood_recs, {})), summarize(apply_temps(ood_recs, temps))
+        ood = {
+            "file": args.ood_data,
+            "n": {k: v["n"] for k, v in a2.items()},
+            "ece_before": {k: round(v["ece"], 4) for k, v in b.items()},
+            "ece_after": {k: round(v["ece"], 4) for k, v in a2.items()},
+        }
+        worse = [k for k in ood["ece_after"] if ood["ece_after"][k] > ood["ece_before"][k] + 0.01]
+        if worse:
+            print(f"!! calibration got WORSE out of distribution for {worse} — the fitting split is "
+                  "probably too close to the training distribution")
+
     print(json.dumps({
         "temperatures": temps,
+        "out_of_distribution": ood,
         "ece_before": {k: v["ece"] for k, v in before.items()},
         "ece_after": {k: v["ece"] for k, v in after.items()},
         "nll_before": {k: v["nll"] for k, v in before.items()},

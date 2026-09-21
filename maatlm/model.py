@@ -130,11 +130,32 @@ class SystemOneModel(nn.Module):
 
     # --------------------------------------------------------------- forward
     def _inner(self) -> nn.Module:
-        """The decoder stack without the LM head (works through a peft wrapper too)."""
+        """The decoder stack without the LM head.
+
+        Works through a peft wrapper, and through the multimodal `ForConditionalGeneration`
+        wrappers used by Gemma 4 and Qwen3.5, which nest the text decoder one or two levels
+        down. The decoder is the module that owns `.layers`."""
         bb = self.backbone
         if hasattr(bb, "get_base_model"):
             bb = bb.get_base_model()
-        return getattr(bb, bb.base_model_prefix)
+        node = getattr(bb, bb.base_model_prefix, None) or bb
+        seen = 0
+        while not hasattr(node, "layers") and seen < 4:
+            nxt = None
+            for attr in ("language_model", "text_model", "model", "decoder"):
+                cand = getattr(node, attr, None)
+                if isinstance(cand, nn.Module):
+                    nxt = cand
+                    break
+            if nxt is None:
+                break
+            node, seen = nxt, seen + 1
+        if not hasattr(node, "layers"):
+            raise RuntimeError(
+                f"could not locate the decoder stack under {type(bb).__name__}; "
+                "add its attribute path to SystemOneModel._inner"
+            )
+        return node
 
     def hidden_states(self, batch: Batch) -> torch.Tensor:
         dtype = next(self.backbone.parameters()).dtype
@@ -244,9 +265,19 @@ class SystemOneModel(nn.Module):
         device: Optional[str] = None,
         **kwargs,
     ) -> "SystemOneModel":
-        backbone = AutoModelForCausalLM.from_pretrained(
-            path, dtype=torch_dtype, attn_implementation=attn_implementation
-        )
+        try:
+            backbone = AutoModelForCausalLM.from_pretrained(
+                path, dtype=torch_dtype, attn_implementation=attn_implementation
+            )
+        except (ValueError, KeyError) as e:
+            # Multimodal checkpoints (Gemma 4, Qwen3.5) register as ForConditionalGeneration
+            # rather than CausalLM. AutoModel resolves them; we only ever use the text decoder.
+            from transformers import AutoModel
+
+            print(f"[maatlm] AutoModelForCausalLM refused {path} ({type(e).__name__}); using AutoModel")
+            backbone = AutoModel.from_pretrained(
+                path, dtype=torch_dtype, attn_implementation=attn_implementation
+            )
         tokenizer = AutoTokenizer.from_pretrained(path)
         cfg_path = os.path.join(path, SYSONE_CONFIG)
         cfg: Dict[str, Any] = {}
