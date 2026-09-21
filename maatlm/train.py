@@ -25,6 +25,7 @@ import time
 from typing import Optional
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from .data import SystemOneDataset, collate_train, read_jsonl
@@ -43,14 +44,33 @@ def load_model(args) -> SystemOneModel:
     return m
 
 
+PROJECTIONS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+
+
+def lora_targets(backbone, wanted=PROJECTIONS) -> list:
+    """Actual nn.Linear modules to adapt, found by type rather than by name.
+
+    Some backbones wrap their projections: Gemma 4 uses Gemma4ClippableLinear, whose real
+    nn.Linear sits at `<proj>.linear`, and peft refuses to wrap the outer class. Walking for
+    nn.Linear under a wanted name handles both wrapped and plain layouts, and skips the
+    per-layer-embedding projections that are not attention/MLP weights."""
+    names = [n for n, mod in backbone.named_modules()
+             if isinstance(mod, nn.Linear) and any(w in n for w in wanted)]
+    if not names:
+        raise RuntimeError(f"found no LoRA targets matching {wanted} in {type(backbone).__name__}")
+    return sorted(names)
+
+
 def maybe_lora(m: SystemOneModel, r: int, alpha: Optional[int] = None):
     from peft import LoraConfig, get_peft_model
 
+    targets = lora_targets(m.backbone)
+    print(f"[maatlm] {len(targets)} LoRA target modules, e.g. {targets[:2]}")
     cfg = LoraConfig(
         r=r,
         lora_alpha=alpha or 2 * r,
         lora_dropout=0.05,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        target_modules=targets,
         task_type="CAUSAL_LM",
     )
     m.backbone = get_peft_model(m.backbone, cfg)

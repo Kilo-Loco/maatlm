@@ -259,3 +259,31 @@ def test_unknown_layer_types_do_not_block():
     from maatlm.model import check_backbone_attention
 
     assert check_backbone_attention(_Cfg([]))["incompatible"] == {}
+
+
+def test_lora_targets_finds_wrapped_projections():
+    """Gemma 4 nests the real nn.Linear inside Gemma4ClippableLinear; peft can only wrap the inner one."""
+    from maatlm.train import lora_targets
+
+    class Clippable(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(8, 8, bias=False)
+
+    class Block(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.q_proj = Clippable()          # wrapped
+            self.gate_proj = torch.nn.Linear(8, 8)  # plain
+            self.per_layer_projection = torch.nn.Linear(8, 8)  # must NOT be adapted
+
+    t = lora_targets(Block())
+    assert "q_proj.linear" in t and "gate_proj" in t
+    assert not any("per_layer" in x for x in t)
+
+
+def test_lora_targets_raises_when_nothing_matches():
+    from maatlm.train import lora_targets
+
+    with pytest.raises(RuntimeError, match="no LoRA targets"):
+        lora_targets(torch.nn.Sequential(torch.nn.Linear(4, 4)))
