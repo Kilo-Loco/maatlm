@@ -61,6 +61,8 @@ def main(argv=None):
     ap.add_argument("--device", default=None)
     ap.add_argument("--min-count", type=int, default=50, help="records needed to fit a per-option-count temperature")
     ap.add_argument("--ood-data", help="held-out set NOT used for fitting; reports whether the fit generalises")
+    ap.add_argument("--force", action="store_true",
+                    help="save temperatures even if --ood-data shows the fit makes calibration worse")
     args = ap.parse_args(argv)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     m = SystemOneModel.from_pretrained(args.model, torch_dtype=torch.bfloat16 if args.bf16 else None, device=device)
@@ -79,11 +81,7 @@ def main(argv=None):
             if 0.05 < T < 20.0:  # a fit pinned at the clamp means the logits carry no signal; keep the type-level value
                 temps[key] = T
     after = summarize(apply_temps(recs, temps))
-    for key, T in temps.items():
-        m.set_temperature(key, T)
-    m.save(args.out or args.model)
-
-    ood = {}
+    ood, refused = {}, False
     if args.ood_data:
         ood_recs = collect(m, read_jsonl(args.ood_data), batch_size=args.batch, device=device)
         b, a2 = summarize(apply_temps(ood_recs, {})), summarize(apply_temps(ood_recs, temps))
@@ -94,11 +92,25 @@ def main(argv=None):
             "ece_after": {k: round(v["ece"], 4) for k, v in a2.items()},
         }
         worse = [k for k in ood["ece_after"] if ood["ece_after"][k] > ood["ece_before"][k] + 0.01]
-        if worse:
-            print(f"!! calibration got WORSE out of distribution for {worse} — the fitting split is "
-                  "probably too close to the training distribution")
+        ood["worse_on"] = worse
+        if worse and not args.force:
+            refused = True
+            print(f"!! REFUSING to save: the fit makes out-of-distribution calibration WORSE for "
+                  f"{worse} ({ {k: (ood['ece_before'][k], ood['ece_after'][k]) for k in worse} }). "
+                  "A single scalar temperature cannot fix distribution-dependent overconfidence; "
+                  "leaving temperatures at 1.0 is better than a harmful fit. Measured 2026-09-21: "
+                  "on maatlm-4b every available fitting split degraded real-ticket ECE. Fix "
+                  "overconfidence during training (label smoothing, harder data) instead, or pass "
+                  "--force if you know better.")
+            temps = {}
+
+    if not refused:
+        for key, T in temps.items():
+            m.set_temperature(key, T)
+        m.save(args.out or args.model)
 
     print(json.dumps({
+        "saved": not refused,
         "temperatures": temps,
         "out_of_distribution": ood,
         "ece_before": {k: v["ece"] for k, v in before.items()},

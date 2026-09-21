@@ -71,6 +71,8 @@ primitive on a held-out split. `server.py` exposes the TypeSafe-compatible
 - Attention implementation must be `sdpa` or `eager`; flash-attn cannot take the tree mask.
 - Temperatures (`log_temp`) are frozen during training and fitted only in `calibrate.py`, only on held-out data.
   Keys are per primitive (`choice`) and per primitive+option count (`choice:3`); the finer key wins.
+  ALWAYS pass `--ood-data`: on maatlm-4b every available fitting split degraded out-of-distribution
+  calibration, so the honest default is temperatures at 1.0. calibrate.py refuses harmful fits.
 - Objective = proper scoring rule (log/Brier) + `--rps` ranked-probability term for ordinal `score`
   questions + `--consistency` JS term between a state and its `paraphrases`. All three are proper /
   minimised at the true distribution; RL is not needed for a one-step decision (see losses.py).
@@ -91,10 +93,13 @@ primitive on a held-out split. `server.py` exposes the TypeSafe-compatible
 
 ## Known gaps / good next tasks (roughly in priority order)
 
-1. **Verify the calibration fix.** `setup_gpu.sh` used to fit temperatures on generator-only data,
-   which the model had memorised, so hard-tier ECE went 0.132 (untrained) -> 0.289 (trained). The
-   split is now public+generator and `calibrate.py --ood-data` reports whether a fit generalises,
-   but this has NOT yet been re-measured on a trained checkpoint.
+1. **Fix overconfidence during TRAINING, not calibration.** Measured A/B on maatlm-4b
+   (2026-09-21), hard-tier ECE: uncalibrated 0.285, fitted on generator-only 0.270, fitted on
+   public+generator 0.280 — temperature scaling barely moves it, and **both fits made real-ticket
+   ECE worse than leaving temperatures at 1.0** (score 0.026 -> 0.096). A single scalar cannot fix
+   distribution-dependent overconfidence. The damage happens in training: untrained hard ECE is
+   0.123, trained is 0.285. Try `--smoothing`, entropy regularisation, fewer steps, or genuinely
+   hard training data. `calibrate.py` now REFUSES to save a fit that `--ood-data` shows is harmful.
 2. **Train Gemma 4 E2B** (~2.3B effective, Apache-2.0, MLX-supported, invariants verified) — the
    on-device candidate. Its zero-shot score is meaningless (instruct format), so only a trained
    run can rank it; system-one-open reaches 0.732 with this backbone.
